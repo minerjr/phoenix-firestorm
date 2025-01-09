@@ -203,6 +203,9 @@ protected:
     mutable F32 mMaxVirtualSize = 0.f;  // The largest virtual size of the image, in pixels - how much data to we need?
     mutable S32  mMaxVirtualSizeResetCounter;
     mutable S32  mMaxVirtualSizeResetInterval;
+    // <FS:minerjr>
+    mutable S32 mPreviousMaxVirtualSizeResetInterval; // The previous max virtual size reset internal which will get changed when deleted from over budget
+    // </FS:minerjr>
     LLFrameTimer mLastReferencedTimer;
 
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
@@ -226,6 +229,12 @@ public:
     static S32 sAuxCount;
     static LLFrameTimer sEvaluationTimer;
     static F32 sDesiredDiscardBias;
+    // <FS:minerjr>
+    static F32 sPreviousDesiredDiscardBias; // Static value of the previous Desired Discard Bias (Used to determine if the desired discard bias is increasing, decreasing, or staying the same
+    static F32 sOverMemoryBudgetStartTime; // Static value stores the mCurrentTime when the viewer first went over budget of RAM (sDesiredDiscardBias > 1.0)
+    static F32 sOverMemoryBudgetEndTime; // Static value stores the mCurrentTime when the viewer first exists over budget of RAM (sDesiredDiscardBias == 1.0)
+    static S32 sNumberOfDeletedTextures;
+    // <//FS:minerjr>
     static S32 sMaxSculptRez ;
     static U32 sMinLargeImageSize ;
     static U32 sMaxSmallImageSize ;
@@ -437,6 +446,14 @@ public:
     void        setInFastCacheList(bool in_list) { mInFastCacheList = in_list; }
     bool        isInFastCacheList() { return mInFastCacheList; }
 
+    // <FS:minerjr>
+    // Accessor methods for getting and setting the the flag for the indicating the texture was
+    // deleted during over bodget of VRAM.
+    void setWasDeletedFromOverBudget(bool was_deleted) { mWasDeletedFromOverBudget = was_deleted; }
+    bool getWasDeletedFromOverBudget() { return mWasDeletedFromOverBudget; }
+    void setDelayToNormalUseAfterOverBudget(F32 delay) { mDelayToNormalUseAfterOverBudget = delay; }
+    F32 getDelayToNormalUseAfterOverBudget() { return mDelayToNormalUseAfterOverBudget; }
+    // </FS:minerjr>
     /*virtual*/bool  isActiveFetching() override; //is actively in fetching by the fetching pipeline.
 
     virtual bool scaleDown() { return false; };
@@ -496,6 +513,10 @@ protected:
     bool mHasFetcher;               // We've made a fecth request
     bool mIsFetching;               // Fetch request is active
     bool mCanUseHTTP;              //This texture can be fetched through http if true.
+    // <FS:minerjr>
+    mutable bool mWasDeletedFromOverBudget; // Flag to determine if a texture was deleted in the previous over VRAM over budget, used to hold of on creating a higher res too soon. Could be modified by another tread.
+    F32 mDelayToNormalUseAfterOverBudget; // Time to wait for returning to normal texture adjustments for larger resolution requests after being over VRAM budget
+    // </FS:minerjr>
     LLCore::HttpStatus mLastHttpGetStatus; // Result of the most recently completed http request for this texture.
 
     FTType mFTType; // What category of image is this - map tile, server bake, etc?

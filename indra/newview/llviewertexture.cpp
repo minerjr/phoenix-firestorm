@@ -91,6 +91,12 @@ S32 LLViewerTexture::sAuxCount = 0;
 LLFrameTimer LLViewerTexture::sEvaluationTimer;
 F32 LLViewerTexture::sDesiredDiscardBias = 0.f;
 
+// <FS:minerjr>
+F32 LLViewerTexture::sPreviousDesiredDiscardBias = 0.f; // Init the static value of the previous discard bias, used to know what direction the bias is going, up, down or staying the same
+F32 LLViewerTexture::sOverMemoryBudgetStartTime = 0.0f; // Init the static time when system first went over VRAM budget
+F32 LLViewerTexture::sOverMemoryBudgetEndTime = 0.0f; // Init the static time when the system finally reached a normal memory amount
+S32 LLViewerTexture::sNumberOfDeletedTextures = 0; // Used to track the number of deleted textures (for debugging)
+// </FS:minerjr>
 S32 LLViewerTexture::sMaxSculptRez = 128; //max sculpt image size
 constexpr S32 MAX_CACHED_RAW_IMAGE_AREA = 64 * 64;
 const S32 MAX_CACHED_RAW_SCULPT_IMAGE_AREA = LLViewerTexture::sMaxSculptRez * LLViewerTexture::sMaxSculptRez;
@@ -539,11 +545,36 @@ void LLViewerTexture::updateClass()
     static bool was_low = false;
     static bool was_sys_low = false;
 
+    // <FS:minerjr>
+    // if (is_low && !was_low)
+    //{
+    //    // slam to 1.5 bias the moment we hit low memory (discards off screen textures immediately)
+    //    sDesiredDiscardBias = llmax(sDesiredDiscardBias, 1.5f);
+    //
+    //    if (is_sys_low || over_pct > 2.f)
+    //    { // if we're low on system memory, emergency purge off screen textures to avoid a death spiral
+    //        LL_WARNS() << "Low system memory detected, emergency downrezzing off screen textures" << LL_ENDL;
+    //        for (auto& image : gTextureList)
+    //        {
+    //            gTextureList.updateImageDecodePriority(image, false /*will modify gTextureList otherwise!*/);
+    //        }
+    //    }
+    //}
+    // Update the previous desired discard bias with the current value before it is modified below. (By comparing the two, you can see if
+    // the bias is increasing, decreasing or staying the same. This is useful for determining how the system handles being over budget of
+    // RAM.
+    sPreviousDesiredDiscardBias = sDesiredDiscardBias;
     if (is_low && !was_low)
     {
         // slam to 1.5 bias the moment we hit low memory (discards off screen textures immediately)
         sDesiredDiscardBias = llmax(sDesiredDiscardBias, 1.5f);
-
+        // We want to store the time from when the system went over budget to when it finished, this can be used to help delay when textures are
+        // updated again after back to normal memory usage is achieved. This can help smooth out the suddent spikes in high resolution fetch requests.
+        // Set the over memory budget start time to the current time
+        sOverMemoryBudgetStartTime = sCurrentTime;
+        // Reset the over memory budget end time to 0.0 as the old value is longer valid
+        sOverMemoryBudgetEndTime = 0.0f;
+    
         if (is_sys_low || over_pct > 2.f)
         { // if we're low on system memory, emergency purge off screen textures to avoid a death spiral
             LL_WARNS() << "Low system memory detected, emergency downrezzing off screen textures" << LL_ENDL;
@@ -553,6 +584,7 @@ void LLViewerTexture::updateClass()
             }
         }
     }
+    // </FS:minerjr>
 
     was_low = is_low;
     was_sys_low = is_sys_low;
@@ -623,6 +655,15 @@ void LLViewerTexture::updateClass()
     }
 
     sDesiredDiscardBias = llclamp(sDesiredDiscardBias, 1.f, 4.f);
+
+    // <FS:minerjr>
+    // If the desired discard bias is 1.0 but was previously a larger number, that means we are back to normal memory usage again
+    if (sDesiredDiscardBias == 1.0f && sPreviousDesiredDiscardBias > sDesiredDiscardBias)
+    {
+        // So we need to set the memory buget end time to the current time
+        sOverMemoryBudgetEndTime = sCurrentTime;
+    }
+    // </FS:minerjr>
 
     LLViewerTexture::sFreezeImageUpdates = false;
 }
@@ -1124,6 +1165,10 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mRequestedDownloadPriority = 0.f;
     mFullyLoaded = false;
     mCanUseHTTP = true;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    mWasDeletedFromOverBudget = false; // Default the flag used to track if this texture was "deleted" from VRAM over budget
+    mDelayToNormalUseAfterOverBudget = 0.0f; // Default the delay to normal use after over budget to 0 as we don't want to accidently have a delay during normal operations
+    // </FS:minerjr> [FIRE-35011]
     mDesiredDiscardLevel = MAX_DISCARD_LEVEL + 1;
     mMinDesiredDiscardLevel = MAX_DISCARD_LEVEL + 1;
 
@@ -2003,6 +2048,10 @@ bool LLViewerFetchedTexture::updateFetch()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     static LLCachedControl<bool> textures_decode_disabled(gSavedSettings,"TextureDecodeDisabled", false);
+    // <FS:minerjr>
+    // Static saved settings allowing to enable/disable the new bias adjustment feature
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // </FS:minerjr>
 
     if(textures_decode_disabled) // don't fetch the surface textures in wireframe mode
     {
@@ -2013,7 +2062,10 @@ bool LLViewerFetchedTexture::updateFetch()
     mFetchPriority = 0;
     mFetchDeltaTime = 999999.f;
     mRequestDeltaTime = 999999.f;
-
+    if (mMaxVirtualSize == 0.0f)
+    {
+        printf("Caputre");
+    }
 #ifndef LL_RELEASE_FOR_DOWNLOAD
     if (mID == LLAppViewer::getTextureFetch()->mDebugID)
     {
@@ -2053,6 +2105,14 @@ bool LLViewerFetchedTexture::updateFetch()
     S32 current_discard = getCurrentDiscardLevelForFetching();
     S32 desired_discard = getDesiredDiscardLevel();
     F32 decode_priority = mMaxVirtualSize;
+
+    // IF the texture was deleted before and still waiting to return to normal, set the texture to 1 lower quality, to try to make it fit
+    // better in
+    if (mWasDeletedFromOverBudget && desired_discard < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
+        use_new_bias_adjustments)
+    {
+        desired_discard = MAX_DISCARD_LEVEL - 1;
+    }
 
     if (mIsFetching)
     {
@@ -2101,6 +2161,14 @@ bool LLViewerFetchedTexture::updateFetch()
 
     desired_discard = llmin(desired_discard, getMaxDiscardLevel());
 
+    // IF the texture was deleted before and still waiting to return to normal, set the texture to 1 lower quality, to try to make it fit
+    // better in
+    if (mWasDeletedFromOverBudget && desired_discard < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
+        use_new_bias_adjustments)
+    {
+        desired_discard = MAX_DISCARD_LEVEL - 1;
+    }
+
     bool make_request = true;
     if (decode_priority <= 0)
     {
@@ -2136,6 +2204,7 @@ bool LLViewerFetchedTexture::updateFetch()
         }
         else
         {
+
             // already at a higher resolution mip, don't discard
             if (current_discard >= 0 && current_discard <= desired_discard)
             {
@@ -2165,7 +2234,7 @@ bool LLViewerFetchedTexture::updateFetch()
         {
             desired_discard = override_tex_discard_level;
         }
-
+        
         // bypass texturefetch directly by pulling from LLTextureCache
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
@@ -3020,6 +3089,10 @@ void LLViewerLODTexture::processTextureStats()
     bool did_downscale = false;
 
     static LLCachedControl<bool> textures_fullres(gSavedSettings,"TextureLoadFullRes", false);
+    // <FS:minerjr>
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // </FS:minerjr>
 
     { // restrict texture resolution to download based on RenderMaxTextureResolution
         static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
@@ -3029,9 +3102,65 @@ void LLViewerLODTexture::processTextureStats()
         mMaxVirtualSize = llmin(mMaxVirtualSize, tex_res);
     }
 
+    // <FS:minerjr>
+    // So each texture has a was deleted from over budget flag that gets set once it has been deleted once during
+    // the time the Bias > 1.0 and only gets reset once the Bias is at 1.0 again and there is a random delay that
+    // prevents all the higher resolution texture commands to pile in all at once and hope that some of the
+    // higher res textures have time to load and get cached.
+
+    // If the texture was previously deleted and waiting to be enabled again to use higher resolution versions.
+    if (mWasDeletedFromOverBudget && use_new_bias_adjustments)
+    {
+        // Only handle the delay if we have reached the end of the over memory budget (The end time is only set once that state has been
+        // reached)
+        if (sOverMemoryBudgetEndTime > 0.0f)
+        {
+            // If the current time has finally elapsed the delay, then
+            if (sCurrentTime >= mDelayToNormalUseAfterOverBudget && mDelayToNormalUseAfterOverBudget != 0.0f)
+            {
+                // Reset the Delay to normal use after over budget back to 0.0f
+                mDelayToNormalUseAfterOverBudget = 0.0f;
+                // Reset the was deleted from over budget as we are back to normal
+                mWasDeletedFromOverBudget = false;
+                
+                sNumberOfDeletedTextures--;
+                LL_INFOS() << "Delay Removed: " << getID() << LL_ENDL;
+                // Let the system actually load the higher requested texture now
+            }
+        }
+        //Else, we want to further delay when to check this texture again
+        else
+        {
+            // Set the delay time to the current time + Random time between 0 second and the amount of time the system was over
+            // bugdet + 1 second, up to 20 seconds capped, to try to be reasonable.
+            // This way we don't need an additional timer, but just a F32 to store it.
+            F32 delay = lerp(1.0f, 10.0f, ll_frand());
+            mDelayToNormalUseAfterOverBudget = sCurrentTime + delay;
+
+            LL_INFOS() << "Delay Added Extended: " << getID() << " Delay: " << mDelayToNormalUseAfterOverBudget << LL_ENDL;
+            
+        }
+    }
+    // Edge case if the user disabled the use new bias adjustments featuress
+    else if (mWasDeletedFromOverBudget && !use_new_bias_adjustments)
+    {
+        // Reset the Delay to normal use after over budget back to 0.0f
+        mDelayToNormalUseAfterOverBudget = 0.0f;
+        // Reset the was deleted from over budget as we are back to normal
+        mWasDeletedFromOverBudget = false;
+        sNumberOfDeletedTextures--;
+
+        LL_INFOS() << "Delay Removed: " << getID() << LL_ENDL;
+        // Let the system actually load the higher requested texture now
+    }
+
     if (textures_fullres)
     {
         mDesiredDiscardLevel = 0;
+        if (mWasDeletedFromOverBudget)
+        {
+            LL_INFOS() << "1" << LL_ENDL;
+        }
     }
     // Generate the request priority and render priority
     else if (mDontDiscard || !mUseMipMaps)
@@ -3039,17 +3168,34 @@ void LLViewerLODTexture::processTextureStats()
         mDesiredDiscardLevel = 0;
         if (mFullWidth > MAX_IMAGE_SIZE_DEFAULT || mFullHeight > MAX_IMAGE_SIZE_DEFAULT)
             mDesiredDiscardLevel = 1; // MAX_IMAGE_SIZE_DEFAULT = 2048 and max size ever is 4096
+        if (mWasDeletedFromOverBudget)
+        {
+            LL_INFOS() << "2" << LL_ENDL;
+        }
     }
     else if (mBoostLevel < LLGLTexture::BOOST_HIGH && mMaxVirtualSize <= 10.f)
     {
         // If the image has not been significantly visible in a while, we don't want it
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, (S8)(MAX_DISCARD_LEVEL + 1));
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
+        if (mWasDeletedFromOverBudget)
+        {
+            LL_INFOS() << "3" << LL_ENDL;
+        }
     }
     else if (!mFullWidth  || !mFullHeight)
     {
         mDesiredDiscardLevel =  getMaxDiscardLevel();
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
+        if (mWasDeletedFromOverBudget)
+        {
+            LL_INFOS() << "4" << LL_ENDL;
+        }
+    }
+    else if (sDesiredDiscardBias > 1.0 && mDesiredDiscardLevel < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
+        use_new_bias_adjustments)
+    {
+        mDesiredDiscardLevel = MAX_DISCARD_LEVEL - 1;
     }
     else
     {
@@ -3096,12 +3242,25 @@ void LLViewerLODTexture::processTextureStats()
         mDesiredDiscardLevel = llmin(getMaxDiscardLevel() + 1, (S32)discard_level);
         // Clamp to min desired discard
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, mDesiredDiscardLevel);
-
+        if (mWasDeletedFromOverBudget)
+        {
+            LL_INFOS() << getID() << " DL:" << getDiscardLevel() << " DD:" << (S32)mDesiredDiscardLevel << LL_ENDL;
+        }
         //
         // At this point we've calculated the quality level that we want,
         // if possible.  Now we check to see if we have it, and take the
         // proper action if we don't.
         //
+        // <FS:minerjr>
+        // During the time the Bias is greater then 0 or after it is back to 1.0, but the current texture was deleted we want to keep
+        // setting the desired discard level to the min value. If the value is greater then the discard min, that means this texture
+        // needs to be deleted by the underlying system, so don't modify it. Also, leave sculpted textures alone.
+        if ((mWasDeletedFromOverBudget) && discard_level < (MAX_DISCARD_LEVEL - 1) &&
+            mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED && use_new_bias_adjustments)
+        {
+            // Force texture to the lowest quality without being discarded.
+            mDesiredDiscardLevel = MAX_DISCARD_LEVEL - 1;
+        }
 
         S32 current_discard = getDiscardLevel();
         if (mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED)
@@ -3118,7 +3277,7 @@ void LLViewerLODTexture::processTextureStats()
         {
             // stop requesting more
             mDesiredDiscardLevel = current_discard;
-        }
+        }                       
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
     }
 
@@ -3147,6 +3306,21 @@ bool LLViewerLODTexture::scaleDown()
     if (!mDownScalePending)
     {
         mDownScalePending = true;
+        // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+        static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+        // If the system is enbled, then actually set the was deleted flag
+        if (use_new_bias_adjustments && LLViewerTexture::sDesiredDiscardBias > 1.0f)
+        {
+            // Set a flag that the texture was already deleted while being over VRAM budget
+            if (!mWasDeletedFromOverBudget)
+            {
+                sNumberOfDeletedTextures++;
+                F32 delay = lerp(1.0f, 10.0f, ll_frand());
+                mDelayToNormalUseAfterOverBudget = sCurrentTime + delay;
+                LL_INFOS() << "Delay Added: " << getID() << " Delay: " << delay << LL_ENDL;
+            }
+            setWasDeletedFromOverBudget(true);            
+        }
         gTextureList.mDownScaleQueue.push(this);
     }
 

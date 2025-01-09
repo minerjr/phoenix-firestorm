@@ -581,8 +581,8 @@ void LLGLTexMemBar::draw()
     U32 texFetchLatMax = U32(recording.getMax(LLTextureFetch::sTexFetchLatency).value() * 1000.0f);
 
     // draw a background above first line.... no idea where the rest of the background comes from for the below text
-    gGL.color4f(0.f, 0.f, 0.f, 0.25f);
-    gl_rect_2d(-10, getRect().getHeight() + line_height*2 + 1, getRect().getWidth()+2, getRect().getHeight()+2);
+    gGL.color4f(0.f, 0.f, 0.f, 0.50f);
+    gl_rect_2d(-10, getRect().getHeight() + line_height * 2 + 1, getRect().getWidth() + 2, getRect().getHeight() + 3);
 
     text = llformat("Est. Free: %d MB Sys Free: %d MB GL Tex: %d MB FBO: %d MB Bias: %.2f Cache: %.1f/%.1f MB",
                     (S32)LLViewerTexture::sFreeVRAMMegabytes,
@@ -594,10 +594,20 @@ void LLGLTexMemBar::draw()
                     cache_max_usage);
     // <FS:Ansariel> Texture memory bars
     //LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0, v_offset + line_height*7,
-    LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0, v_offset + line_height*9,
+    LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0, v_offset + line_height*10,
     // </FS:Ansariel>
                                              text_color, LLFontGL::LEFT, LLFontGL::TOP);
-
+    int bias_direction = LLViewerTexture::sDesiredDiscardBias < LLViewerTexture::sPreviousDesiredDiscardBias   ? -1
+                         : LLViewerTexture::sDesiredDiscardBias > LLViewerTexture::sPreviousDesiredDiscardBias ? 1 : 0;
+                                                                                                                       
+    text = llformat("Over Budget - # Del Tex: %d Start Time: %.2f End Time: %.2f, Bias Direction %d",
+                    LLViewerTexture::sNumberOfDeletedTextures,
+                    LLViewerTexture::sOverMemoryBudgetStartTime,
+                    LLViewerTexture::sOverMemoryBudgetEndTime,
+                    bias_direction);
+    LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0, v_offset + line_height * 9,
+                                             // </FS:Ansariel>
+                                             text_color, LLFontGL::LEFT, LLFontGL::TOP);
     // <FS:Ansariel> Texture memory bars
     S32 bar_left = 0;
     constexpr S32 bar_width = 200;

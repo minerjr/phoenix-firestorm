@@ -902,6 +902,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 {
     llassert(!gCubeSnapshot);
 
+    // <FS:minerjr>
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // </FS:minerjr>
+
     if (imagep->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)  // don't bother checking face list for boosted textures
     {
         static LLCachedControl<F32> texture_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.04f);
@@ -982,6 +987,19 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             imagep->setBoostLevel(LLViewerFetchedTexture::BOOST_HIGH);
         }
 
+        // <FS:minerjr>
+        //if (imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        //{ // conditionally reset max virtual size for unboosted LOD_TEXTURES
+        //  // this is an alternative to decaying mMaxVirtualSize over time
+        //  // that keeps textures from continously downrezzing and uprezzing in the background
+        //
+        //    if (LLViewerTexture::sDesiredDiscardBias > 1.5f ||
+        //        (!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
+        //    {
+        //        imagep->mMaxVirtualSize = 0.f;
+        //    }
+        //}
+
         if (imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
         { // conditionally reset max virtual size for unboosted LOD_TEXTURES
           // this is an alternative to decaying mMaxVirtualSize over time
@@ -991,8 +1009,33 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                 (!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
             {
                 imagep->mMaxVirtualSize = 0.f;
+                // The above code ends up causing the texture to be deleted when checked by
+                // variuos llimagegl->scaledown and call back functions.
+
+                //If the system is enbled, then actually set the was deleted flag                
+                if (use_new_bias_adjustments)
+                {
+                    // Set a flag that the texture was already deleted while being over VRAM budget
+                    //imagep->setWasDeletedFromOverBudget(true);
+                }
             }
         }
+        // This is an emergecy get everyone else lower res as well if the system is still in low memory after 60 seconds.
+        // If the current texture is not on screen and the time in the low memory mode is greater then 60 seconds and
+        // and the current object is below BOOST_SCULPTED level, then
+        else if (use_new_bias_adjustments && LLViewerTexture::sDesiredDiscardBias > 1.0f && !on_screen &&
+                 (LLViewerTexture::sCurrentTime - LLViewerTexture::sOverMemoryBudgetStartTime) > 60.0f &&
+                 LLViewerTexture::sOverMemoryBudgetEndTime == 0.0f && imagep->getType() == LLViewerTexture::LOD_TEXTURE &&
+                 imagep->getBoostLevel() < LLViewerTexture::BOOST_SCULPTED)
+        {
+            // This code ends up causing the texture to be deleted when checked by
+            // variuos llimagegl->scaledown and call back functions.
+            //imagep->mMaxVirtualSize = 0.f;
+
+            // Set a flag that the texture was already deleted while being over VRAM budget
+            //imagep->setWasDeletedFromOverBudget(true);
+        }
+        // </FS:minerjr>
 
         imagep->addTextureStats(max_vsize);
     }
@@ -1059,7 +1102,13 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     {
         return; //wait for loading from the fast cache.
     }
-
+    // <FS:minerjr>
+    // If the image was deleted due to over budget, delay the process texture stats for the specified amount of time
+    if (imagep->getWasDeletedFromOverBudget() && LLViewerTexture::sCurrentTime <= imagep->getDelayToNormalUseAfterOverBudget() && use_new_bias_adjustments)
+    {
+        return;
+    }
+    // </FS:minerjr>
     imagep->processTextureStats();
 }
 
@@ -1214,7 +1263,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
-    if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+    if (LLViewerTexture::sDesiredDiscardBias > 1.f && LLViewerTexture::sDesiredDiscardBias >= LLViewerTexture::sPreviousDesiredDiscardBias)
     {
         // we are over memory target, update more agresively
         update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
