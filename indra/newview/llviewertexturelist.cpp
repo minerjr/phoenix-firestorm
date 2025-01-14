@@ -1008,6 +1008,10 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     {
         imagep->updateImageDecodePriority();
     }
+    else
+    {
+        imagep->resetNewSystem();
+    }
     // </FS:minerjr>
 #if 0
     imagep->setDebugText(llformat("%d/%d - %d/%d -- %d/%d",

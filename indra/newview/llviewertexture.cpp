@@ -898,6 +898,20 @@ void LLViewerTexture::resetTextureStats()
     mMaxVirtualSizeResetCounter = 0;
 }
 
+// <FS:minerjr>
+void LLViewerTexture::updateMinDistanceSquaredToCamera(F32 value)
+{
+    // If the current min distance to the camera is larger then the value passed in, then update the min distnace to the new value
+    if (mMinDistanceSquaredToCamera > fabs(value))
+    {
+        mMinDistanceSquaredToCamera = fabs(value);
+    }
+    // Increase the number of times the texture has been referenced by 1
+    mNumberOfReferencesInFrustrum++;
+}
+// </FS:minerjr>
+
+
 //virtual
 F32 LLViewerTexture::getMaxVirtualSize()
 {
@@ -1800,7 +1814,20 @@ void LLViewerFetchedTexture::processTextureStats()
         // if not return and skip this update (Counter is only done once it reaches 0)
         if (--mMaxVirtualSizeResetCounter > 0)
         {
+            // selection manager will immediately reset BOOST_SELECTED but never unsets it
+            // unset it immediately after we consume it
+            if (getBoostLevel() == BOOST_SELECTED)
+            {
+                setBoostLevel(BOOST_NONE);
+            }
+
             return;
+        }
+        // Else, we can operate normally
+        else
+        {
+            // Reset the max virutal size reset counter
+            resetMaxVirtualSizeResetCounter();
         }
     }
     // </FS:minerjr>
@@ -1932,203 +1959,222 @@ void LLViewerFetchedTexture::setBoostLevel(S32 level)
     }
 }
 
-// <FS:minerjr>
+void LLViewerFetchedTexture::resetNewSystem()
+{
+    mPreviousMemoryOverBudgetState = 0;
+    mMemoryOverBudgetState         = 0;
+    mMaxVirtualSizePossible        = 0.0f;
+    mPreviousMinDistanceSquaredToCamera = 99999999.0f;
+    mPreviousNumberOfReferencesInFrustrum = 0;
+    mNumberOfReferencesInFrustrum         = 0;
+    mMinDistanceSquaredToCamera           = 99999999.0f;
+    mDelayToNormalUseAfterOverBudget      = 0.0f;
+}
+
 bool LLViewerFetchedTexture::updateImageDecodePriority()
 {
-    // If we are in the delay state, then check if
-    if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY))
+    if (getType() == LLViewerTexture::FETCHED_TEXTURE || getType() == LLViewerTexture::LOD_TEXTURE)
     {
-        // If we have not pased the time to go back to normal, then just return false
-        if (mDelayToNormalUseAfterOverBudget <= sCurrentTime)
+
+
+
+        // If we are in the delay state, then check if
+        if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY))
         {
-            return false;
-        }
-        // Else, we passed the delay, so now we can reset the texture status and continue
-        else
-        {
-            // Check to see if both of the System RAM or VRAM bais are set to normal (1.0f)
-            // If so, reset the text back to normal state
-            if (sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
+            // If we have not pased the time to go back to normal, then just return false
+            if (mDelayToNormalUseAfterOverBudget <= sCurrentTime)
             {
-                // Set the memory over budget value to
-                setMemoryOverBudgetState(TEXTURE_MEMORY_STATES::MEMORY_NORMAL);
-                // Reset the delay to normal use after over budget to 0.0
-                mDelayToNormalUseAfterOverBudget = 0.0f;
-                // Restore the normal texture update interval
-                setMaxVirtualSizeResetInterval(getPreviousMaxVirtualSizeResetInterval());
-                // Reset the interval
-                resetMaxVirtualSizeResetCounter();
+                return false;
             }
-            // Else, clear the delay flag again so that the texture can reapply the delay if needed
+            // Else, we passed the delay, so now we can reset the texture status and continue
             else
             {
-                mMemoryOverBudgetState &= ~TEXTURE_MEMORY_STATES::DELAY_RECOVERY;
+                // Check to see if both of the System RAM or VRAM bais are set to normal (1.0f)
+                // If so, reset the text back to normal state
+                if (sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
+                {
+                    // Set the memory over budget value to
+                    setMemoryOverBudgetState(TEXTURE_MEMORY_STATES::MEMORY_NORMAL);
+                    // Reset the delay to normal use after over budget to 0.0
+                    mDelayToNormalUseAfterOverBudget = 0.0f;
+                    // Restore the normal texture update interval
+                    setMaxVirtualSizeResetInterval(getPreviousMaxVirtualSizeResetInterval());
+                    // Reset the interval
+                    resetMaxVirtualSizeResetCounter();
+                }
+                // Else, clear the delay flag again so that the texture can reapply the delay if needed
+                else
+                {
+                    mMemoryOverBudgetState &= ~TEXTURE_MEMORY_STATES::DELAY_RECOVERY;
+                }
+                // We will do the following below to update the texture again to possibly even smaller then before and add another delay
             }
-            // We will do the following below to update the texture again to possibly even smaller then before and add another delay
         }
-    }
 
-    // First get the min distance to the camera delta
-    F32 minDistanceToCameraDelta = mPreviousMinDistanceSquaredToCamera - mMinDistanceSquaredToCamera;
-    // Get the camera far plan and store the square of it (Prevent function call being called twice)
-    F32 cameraFarDistanceSquared = LLViewerCamera::getInstance()->getFar();
-    cameraFarDistanceSquared     = cameraFarDistanceSquared * cameraFarDistanceSquared;
+        // First get the min distance to the camera delta
+        F32 minDistanceToCameraDelta = mPreviousMinDistanceSquaredToCamera - mMinDistanceSquaredToCamera;
+        // Get the camera far plan and store the square of it (Prevent function call being called twice)
+        F32 cameraFarDistanceSquared = LLViewerCamera::getInstance()->getFar();
+        cameraFarDistanceSquared     = cameraFarDistanceSquared * cameraFarDistanceSquared;
 
-    // Now we check to see number of references in frustrum is greater then 1024, and if so
-    if (mNumberOfReferencesInFrustrum > 1024)
-    {
-        // Set the current texture boost level the BOOST:HIGH
-        setBoostLevel(LLViewerFetchedTexture::BOOST_HIGH);
-    }
-
-    // Get the max virtual size possible
-    static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
-    // sanity clamp debug setting to avoid settings hack shenanigans
-    F32 tex_res = (F32)llclamp((S32)max_texture_resolution, 512, 2048);
-    tex_res *= tex_res;
-    mMaxVirtualSizePossible = tex_res; // Set the current Max Virtual Size Possible to the Render max Texture Resolution. (Should be actual
-                                       // texture max, may change later on)
-
-    // Get the textures full res flag
-    static LLCachedControl<bool> textures_fullres(gSavedSettings, "TextureLoadFullRes", false);
-
-    // Set the the current texture scale size to 0.0 if there were no textures in the frustrum, otherwize set it to 1.0 as a default
-    F32 textureScaleSize = (mNumberOfReferencesInFrustrum == 0) ? 0.0f : 1.0f;
-
-    // If the texture is flagged to be full screen or boosted, override the scale value to 1.0 even if it is currently on off screen.
-    if (textures_fullres || getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)
-    {
-        textureScaleSize = 1.0f;
-    }
-    // Else if the camera far distance is valid (no div by zeros) and there is at least 1 texture in screen, then
-    else if (cameraFarDistanceSquared != 0.0f && mNumberOfReferencesInFrustrum > 0)
-    {
-        // Set the texture scale to the max value 1.0 minus the current distance to the camera divided by the far distance
-        // to get the distance of the object percetage to what is viewable by the player as long as there was at least object
-        // with the texture in the frustrum. So 1.0 is as largest scale factor of a texture and 0.0 is the smallest
-        textureScaleSize = 1.0f - (mMinDistanceSquaredToCamera / cameraFarDistanceSquared);
-    }
-
-    // Now check to see if there is an emergency due to low System RAM (Desired Discard bias 1.0 = OK, > 1.0 up to 4.0 max bad)
-    // and the current texture is not boosted to HIGH and this is the first time this texture is being adjusted
-    if (sDesiredDiscardBias > 1.0f && (!textures_fullres && getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH))
-    {
-        // If the texture is an LOD texture and the image is not boosteded, then
-        if (getType() == LLViewerTexture::LOD_TEXTURE && getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        // Now we check to see number of references in frustrum is greater then 1024, and if so
+        if (mNumberOfReferencesInFrustrum > 1024)
         {
-            // If there is a desired discard bias greater then 1.5 drop the quality of any testure even ones on screen.
-            if (LLViewerTexture::sDesiredDiscardBias > 1.5f)
+            // Set the current texture boost level the BOOST:HIGH
+            setBoostLevel(LLViewerFetchedTexture::BOOST_HIGH);
+        }
+
+        // Get the max virtual size possible
+        static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
+        // sanity clamp debug setting to avoid settings hack shenanigans
+        F32 tex_res = (F32)llclamp((S32)max_texture_resolution, 512, 2048);
+        tex_res *= tex_res;
+        mMaxVirtualSizePossible = tex_res; // Set the current Max Virtual Size Possible to the Render max Texture Resolution. (Should be actual
+                                           // texture max, may change later on)
+
+        // Get the textures full res flag
+        static LLCachedControl<bool> textures_fullres(gSavedSettings, "TextureLoadFullRes", false);
+
+        // Set the the current texture scale size to 0.0 if there were no textures in the frustrum, otherwize set it to 1.0 as a default
+        F32 textureScaleSize = (mNumberOfReferencesInFrustrum == 0) ? 0.0f : 1.0f;
+
+        // If the texture is flagged to be full screen or boosted, override the scale value to 1.0 even if it is currently on off screen.
+        if (textures_fullres || getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)
+        {
+            textureScaleSize = 1.0f;
+        }
+        // Else if the camera far distance is valid (no div by zeros) and there is at least 1 texture in screen, then
+        else if (cameraFarDistanceSquared != 0.0f && mNumberOfReferencesInFrustrum > 0)
+        {
+            // Set the texture scale to the max value 1.0 minus the current distance to the camera divided by the far distance
+            // to get the distance of the object percetage to what is viewable by the player as long as there was at least object
+            // with the texture in the frustrum. So 1.0 is as largest scale factor of a texture and 0.0 is the smallest
+            textureScaleSize = 1.0f - (mMinDistanceSquaredToCamera / cameraFarDistanceSquared);
+        }
+
+        // Now check to see if there is an emergency due to low System RAM (Desired Discard bias 1.0 = OK, > 1.0 up to 4.0 max bad)
+        // and the current texture is not boosted to HIGH and this is the first time this texture is being adjusted
+        if (sDesiredDiscardBias > 1.0f && (!textures_fullres && getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH))
+        {
+            // If the texture is an LOD texture and the image is not boosteded, then
+            if (getType() == LLViewerTexture::LOD_TEXTURE && getBoostLevel() == LLViewerTexture::BOOST_NONE)
             {
-                // Set the exture scale size to 0.0
-                textureScaleSize = 0.0f;
-                // Flag that we want to delete the texture due to being over budget
-                setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::RAM_LOW_DELETED);
+                // If there is a desired discard bias greater then 1.5 drop the quality of any testure even ones on screen.
+                if (LLViewerTexture::sDesiredDiscardBias > 1.5f)
+                {
+                    // Set the exture scale size to 0.0
+                    textureScaleSize = 0.0f;
+                    // Flag that we want to delete the texture due to being over budget
+                    setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::RAM_LOW_DELETED);
+                }
+                // Else, if the bias is greater then 1.0 so scale the texture down
+                else
+                {
+                    // Take the current texture scale size and further scale it down by the bias amount
+                    textureScaleSize /= LLViewerTexture::sDesiredDiscardBias;
+                    // Flag that we want to scale down the texture
+                    mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_SCALED_DOWN;
+                }
             }
-            // Else, if the bias is greater then 1.0 so scale the texture down
-            else
+            // Else for all other types of textures if the desired discard value is greate then 2.0
+            // and there are at least 1 references to the texture in the current frustrum
+            else if (sDesiredDiscardBias > 2.0f && mNumberOfReferencesInFrustrum > 0)
             {
-                // Take the current texture scale size and further scale it down by the bias amount
+                // Take the current texture scale size and further scale it down by the bias amount as well.
                 textureScaleSize /= LLViewerTexture::sDesiredDiscardBias;
                 // Flag that we want to scale down the texture
                 mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_SCALED_DOWN;
             }
-        }
-        // Else for all other types of textures if the desired discard value is greate then 2.0
-        // and there are at least 1 references to the texture in the current frustrum
-        else if (sDesiredDiscardBias > 2.0f && mNumberOfReferencesInFrustrum > 0)
-        {
-            // Take the current texture scale size and further scale it down by the bias amount as well.
-            textureScaleSize /= LLViewerTexture::sDesiredDiscardBias;
-            // Flag that we want to scale down the texture
-            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_SCALED_DOWN;
-        }
-        // Finall if the desired discard bias is greater then 2.0, then
-        else if (sDesiredDiscardBias > 2.0f)
-        {
-            // Set the exture scale size to 0.0
-            textureScaleSize = 0.0f;
-            // Flag that we want to delete the texture due to being over budget
-            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_DELETED;
-        }
-        else
-        {
-            // Set the texture to be in the low System RAM state, but no change was made
-            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_NO_CHANGE;
-        }
-    }
-
-    // Also check to see if there is an emergency due to low Video RAM (Desired Discard VRAM bias 1.0 = OK, > 1.0 up to 4.0 max bad)
-    if (sDesiredDiscardVRAMBias > 1.0f)
-    {
-        //
-    }
-    // If the memory over budget state is not set to normal and the memory is currently normal, then
-    if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL && sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
-    {
-        // If the texture is not in delay recovery mode
-        if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY) == false)
-        {
-            // Set the memory over budget flag to DELAY_RECOVERY
-            setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::DELAY_RECOVERY);
-            // Set the delay to update this texture to 1 second in advance
-            mDelayToNormalUseAfterOverBudget = sCurrentTime + 1.0f;
-            // If there are not a lot of these in the sceen, less then 3, further push out the delay
-            if (mNumberOfReferencesInFrustrum < 3)
+            // Finall if the desired discard bias is greater then 2.0, then
+            else if (sDesiredDiscardBias > 2.0f)
             {
-                // Add 3 more seconds
-                mDelayToNormalUseAfterOverBudget += 3.0f;
-            }
-            // IF there are no textures in the scene, then add further delay
-            if (mNumberOfReferencesInFrustrum == 0)
-            {
-                // Add 5 more seconds
-                mDelayToNormalUseAfterOverBudget += 5.0f;
-            }
-        }
-    }
-
-    // Store the new texture size based upon the max virtual size possible times the new texture scale size
-    addTextureStats(mMaxVirtualSizePossible * textureScaleSize);
-
-    // Check to see if we are in memory over budget state
-    if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
-    {
-        // If this is the first time that we had the texture go over memory 
-        if (mPreviousMemoryOverBudgetState == TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
-        {
-            // Store the current max virtual size reset interval in the previous one
-            setPreviousMaxVirtualSizeResetInterval(mMaxVirtualSizeResetInterval);
-            // If the number of references increased from the last frame
-            if (mNumberOfReferencesInFrustrum > mPreviousNumberOfReferencesInFrustrum)
-            {
-                // Add 2 more frames before an update
-                mMaxVirtualSizeResetInterval += 2;
-            }
-            // If the texture is no longer in screen but was previous
-            else if (mNumberOfReferencesInFrustrum == 0 && mPreviousNumberOfReferencesInFrustrum > 0)
-            {
-                // Add 10 more frames before an update
-                mMaxVirtualSizeResetInterval += 10;
+                // Set the exture scale size to 0.0
+                textureScaleSize = 0.0f;
+                // Flag that we want to delete the texture due to being over budget
+                mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_DELETED;
             }
             else
             {
-                // Else, add a delay of 5 frames 
-                mMaxVirtualSizeResetInterval += 5;
+                // Set the texture to be in the low System RAM state, but no change was made
+                mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_NO_CHANGE;
             }
         }
+
+        // Also check to see if there is an emergency due to low Video RAM (Desired Discard VRAM bias 1.0 = OK, > 1.0 up to 4.0 max bad)
+        if (sDesiredDiscardVRAMBias > 1.0f)
+        {
+            //
+        }
+        // If the memory over budget state is not set to normal and the memory is currently normal, then
+        if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL && sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
+        {
+            // If the texture is not in delay recovery mode
+            if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY) == false)
+            {
+                // Set the memory over budget flag to DELAY_RECOVERY
+                setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::DELAY_RECOVERY);
+                // Set the delay to update this texture to 1 second in advance
+                mDelayToNormalUseAfterOverBudget = sCurrentTime + 1.0f;
+                // If there are not a lot of these in the sceen, less then 3, further push out the delay
+                if (mNumberOfReferencesInFrustrum < 3)
+                {
+                    // Add 3 more seconds
+                    mDelayToNormalUseAfterOverBudget += 3.0f;
+                }
+                // IF there are no textures in the scene, then add further delay
+                if (mNumberOfReferencesInFrustrum == 0)
+                {
+                    // Add 5 more seconds
+                    mDelayToNormalUseAfterOverBudget += 5.0f;
+                }
+            }
+        }
+
+        // Store the new texture size based upon the max virtual size possible times the new texture scale size
+        addTextureStats(mMaxVirtualSizePossible * textureScaleSize);
+
+        // Check to see if we are in memory over budget state
+        if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
+        {
+            // If this is the first time that we had the texture go over memory 
+            if (mPreviousMemoryOverBudgetState == TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
+            {
+                // Store the current max virtual size reset interval in the previous one
+                setPreviousMaxVirtualSizeResetInterval(mMaxVirtualSizeResetInterval);
+                // If the number of references increased from the last frame
+                if (mNumberOfReferencesInFrustrum > mPreviousNumberOfReferencesInFrustrum)
+                {
+                    // Add 2 more frames before an update
+                    mMaxVirtualSizeResetInterval += 2;
+                }
+                // If the texture is no longer in screen but was previous
+                else if (mNumberOfReferencesInFrustrum == 0 && mPreviousNumberOfReferencesInFrustrum > 0)
+                {
+                    // Add 10 more frames before an update
+                    mMaxVirtualSizeResetInterval += 10;
+                }
+                else
+                {
+                    // Else, add a delay of 5 frames 
+                    mMaxVirtualSizeResetInterval += 5;
+                }
+            }
+        }
+
+        // Update the previous values to the current values
+        mPreviousMemoryOverBudgetState = mMemoryOverBudgetState; // Store the Memory over budget state
+        mPreviousNumberOfReferencesInFrustrum = mNumberOfReferencesInFrustrum; // Store the number of references in frustrum
+        mPreviousMinDistanceSquaredToCamera = mMinDistanceSquaredToCamera; // Store the min distance squared to the camera
+        // Reset the values for next update
+        mNumberOfReferencesInFrustrum = 0; // Reset the number of references in frustrum to 0
+        // The set min distance squared to the camera to the cameras current far plane, and store of the square of it
+        mMinDistanceSquaredToCamera   = LLViewerCamera::getInstance()->getFar();
+        mMinDistanceSquaredToCamera *= mMinDistanceSquaredToCamera;
+
+        return true;
     }
 
-    // Update the previous values to the current values
-    mPreviousMemoryOverBudgetState = mMemoryOverBudgetState; // Store the Memory over budget state
-    mPreviousNumberOfReferencesInFrustrum = mNumberOfReferencesInFrustrum; // Store the number of references in frustrum
-    mPreviousMinDistanceSquaredToCamera = mMinDistanceSquaredToCamera; // Store the min distance squared to the camera
-    // Reset the values for next update
-    mNumberOfReferencesInFrustrum = 0; // Reset the number of references in frustrum to 0
-    // The set min distance squared to the camera to the cameras current far plane, and store of the square of it
-    mMinDistanceSquaredToCamera   = LLViewerCamera::getInstance()->getFar();
-    mMinDistanceSquaredToCamera *= mMinDistanceSquaredToCamera;
-
-    return true;
+    return false;    
 }
 
 bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 current_discard, S32 fetch_discard, F32 decode_priority)
@@ -3515,13 +3561,14 @@ void LLViewerLODTexture::processTextureStats()
         // During the time the Bias is greater then 0 or after it is back to 1.0, but the current texture was deleted we want to keep
         // setting the desired discard level to the min value. If the value is greater then the discard min, that means this texture
         // needs to be deleted by the underlying system, so don't modify it. Also, leave sculpted textures alone.
+        /*
         if ((mMemoryOverBudgetState) && discard_level < (MAX_DISCARD_LEVEL - 1) &&
             mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED && use_new_bias_adjustments)
         {
             // Force texture to the lowest quality without being discarded.
             mDesiredDiscardLevel = MAX_DISCARD_LEVEL - 1;
         }
-
+        */
         S32 current_discard = getDiscardLevel();
         if (mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED)
         {

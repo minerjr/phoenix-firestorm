@@ -167,8 +167,7 @@ public:
     S32 getPreviousMaxVirtualSizeResetInterval() const { return mPreviousMaxVirtualSizeResetInterval; }
     
     void resetMinDistanceSquaredToCamera() const;
-    void updateMinDistanceSquaredToCamera(F32 x, F32 y, F32 z) const;
-    void updateMinDistanceSquaredToCamera(F32 value) const;
+    void updateMinDistanceSquaredToCamera(F32 value);
     F32  getMinDistanceSquaredToCamera() const { return mMinDistanceSquaredToCamera; }
     F32  getPreviousMinDistanceSquaredToCamera() const { return mMinDistanceSquaredToCamera; }
     F32  getMinDistanceSquaredToCameraDelta() const { return mPreviousMinDistanceSquaredToCamera - mMinDistanceSquaredToCamera; }
@@ -492,6 +491,7 @@ public:
     void setDelayToNormalUseAfterOverBudget(F32 delay) { mDelayToNormalUseAfterOverBudget = delay; }
     F32 getDelayToNormalUseAfterOverBudget() { return mDelayToNormalUseAfterOverBudget; }
     bool updateImageDecodePriority();
+    void resetNewSystem();
 
     // </FS:minerjr>
     /*virtual*/bool  isActiveFetching() override; //is actively in fetching by the fetching pipeline.

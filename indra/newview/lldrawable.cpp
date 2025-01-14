@@ -922,6 +922,19 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
                 LLVector3 cam_to_box_offset = point_to_box_offset(cam_pos_from_agent, av_box);
                 mDistanceWRTCamera = llmax(0.01f, ll_round(cam_to_box_offset.magVec(), 0.01f));
                 mVObjp->updateLOD();
+                if (isVisible() && mVObjp)
+                {
+                    U8 numberOfTextures = mVObjp->getNumTEs();
+                    // loop over all the textures
+                    for (int index = 0; index < numberOfTextures; index++)
+                    {
+                        LLViewerTexture* pTexture = mVObjp->getTEImage(index);
+                        if (pTexture)
+                        {
+                            pTexture->updateMinDistanceSquaredToCamera(mDistanceWRTCamera * mDistanceWRTCamera);
+                        }
+                    }
+                }
                 return;
             }
         }
@@ -933,6 +946,20 @@ void LLDrawable::updateDistance(LLCamera& camera, bool force_update)
         pos -= camera.getOrigin();
         mDistanceWRTCamera = ll_round(pos.magVec(), 0.01f);
         mVObjp->updateLOD();
+
+        if (isVisible() && mVObjp)
+        {
+            U8 numberOfTextures = mVObjp->getNumTEs();
+            // loop over all the textures
+            for (int index = 0; index < numberOfTextures; index++)
+            {
+                LLViewerTexture* pTexture = mVObjp->getTEImage(index);
+                if (pTexture)
+                {
+                    pTexture->updateMinDistanceSquaredToCamera(mDistanceWRTCamera * mDistanceWRTCamera);
+                }
+            }
+        }
     }
 }
 
