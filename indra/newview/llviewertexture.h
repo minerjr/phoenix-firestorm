@@ -107,6 +107,21 @@ public:
         INVALID_TEXTURE_TYPE
     };
 
+    // <FS:minerjr>
+    // Add some states
+    enum TEXTURE_MEMORY_STATES
+    {
+        MEMORY_NORMAL,
+        RAM_LOW_NO_CHANGE = 1,
+        VRAM_LOW_NO_CHANGE  = 2,
+        RAM_LOW_SCALED_DOWN = 4,
+        VRAM_LOW_SCALED_DOWN = 8,
+        RAM_LOW_DELETED = 16,
+        VRAM_LOW_DELETED = 32,
+        DELAY_RECOVERY = 64
+    };
+    // <FS:minerjr>
+
     typedef std::vector<class LLFace*> ll_face_list_t;
     typedef std::vector<LLVOVolume*> ll_volume_list_t;
 
@@ -147,7 +162,18 @@ public:
     void setMaxVirtualSizeResetInterval(S32 interval)const {mMaxVirtualSizeResetInterval = interval;}
     void resetMaxVirtualSizeResetCounter()const {mMaxVirtualSizeResetCounter = mMaxVirtualSizeResetInterval;}
     S32 getMaxVirtualSizeResetCounter() const { return mMaxVirtualSizeResetCounter; }
-
+    // <FS:minerjr>
+    void setPreviousMaxVirtualSizeResetInterval(S32 interval) const { mPreviousMaxVirtualSizeResetInterval = interval; }
+    S32 getPreviousMaxVirtualSizeResetInterval() const { return mPreviousMaxVirtualSizeResetInterval; }
+    
+    void resetMinDistanceSquaredToCamera() const;
+    void updateMinDistanceSquaredToCamera(F32 x, F32 y, F32 z) const;
+    void updateMinDistanceSquaredToCamera(F32 value) const;
+    F32  getMinDistanceSquaredToCamera() const { return mMinDistanceSquaredToCamera; }
+    F32  getPreviousMinDistanceSquaredToCamera() const { return mMinDistanceSquaredToCamera; }
+    F32  getMinDistanceSquaredToCameraDelta() const { return mPreviousMinDistanceSquaredToCamera - mMinDistanceSquaredToCamera; }
+    S32 isMovingAwayFromCamera();
+    // </FS:minerjr>
     virtual F32  getMaxVirtualSize() ;
 
     LLFrameTimer* getLastReferencedTimer() { return &mLastReferencedTimer; }
@@ -204,7 +230,13 @@ protected:
     mutable S32  mMaxVirtualSizeResetCounter;
     mutable S32  mMaxVirtualSizeResetInterval;
     // <FS:minerjr>
+    mutable F32 mMaxVirtualSizePossible; // The the largest virtual size possible for the texture (We reset the mMaxVirtualSize a lot so it's not the actual max size most of the time)
     mutable S32 mPreviousMaxVirtualSizeResetInterval; // The previous max virtual size reset internal which will get changed when deleted from over budget
+    // New way of scaling the textures, look at the distance from the camera and not the % of pixels on screen of the largest face
+    mutable F32 mMinDistanceSquaredToCamera;   // Store the min distance squared of of the texture from the camera
+    mutable F32 mPreviousMinDistanceSquaredToCamera; // Store the previous min distance squared of the texture from the camera
+    mutable S32 mNumberOfReferencesInFrustrum; // Store the number of references that are in the frustrum
+    mutable S32 mPreviousNumberOfReferencesInFrustrum; // Store the previous number of references that are in the frustrum
     // </FS:minerjr>
     LLFrameTimer mLastReferencedTimer;
 
@@ -228,11 +260,13 @@ public:
     static S32 sRawCount;
     static S32 sAuxCount;
     static LLFrameTimer sEvaluationTimer;
-    static F32 sDesiredDiscardBias;
     // <FS:minerjr>
-    static F32 sPreviousDesiredDiscardBias; // Static value of the previous Desired Discard Bias (Used to determine if the desired discard bias is increasing, decreasing, or staying the same
-    static F32 sOverMemoryBudgetStartTime; // Static value stores the mCurrentTime when the viewer first went over budget of RAM (sDesiredDiscardBias > 1.0)
-    static F32 sOverMemoryBudgetEndTime; // Static value stores the mCurrentTime when the viewer first exists over budget of RAM (sDesiredDiscardBias == 1.0)
+    static F32 sDesiredDiscardBias; // Static value for the SYSTEM RAM desired discard bias (it was kind of before)
+    static F32 sPreviousDesiredDiscardBias; // Static value of the previous RAM Desired Discard Bias (Used to determine if the desired discard bias is increasing, decreasing, or staying the same
+    static F32 sDesiredDiscardVRAMBias; // Static value of the VRAM Desired Discard Bias
+    static F32 sPreviousDesiredDiscardVRAMBias; // Static value of the previous VRAM Desired Discard Bias
+    static F32 sOverMemoryBudgetStartTime; // Static value stores the mCurrentTime when the viewer first went over budget of RAM (sDesiredDiscardBias > 1.0 || sDesiredDiscardBiasVRAMBais > 1.0)
+    static F32 sOverMemoryBudgetEndTime; // Static value stores the mCurrentTime when the viewer first exists over budget of RAM (sDesiredDiscardBias == 1.0 && sDesiredDiscardBiasVRAMBais == 1.0)
     static S32 sNumberOfDeletedTextures;
     // <//FS:minerjr>
     static S32 sMaxSculptRez ;
@@ -447,12 +481,18 @@ public:
     bool        isInFastCacheList() { return mInFastCacheList; }
 
     // <FS:minerjr>
-    // Accessor methods for getting and setting the the flag for the indicating the texture was
-    // deleted during over bodget of VRAM.
-    void setWasDeletedFromOverBudget(bool was_deleted) { mWasDeletedFromOverBudget = was_deleted; }
-    bool getWasDeletedFromOverBudget() { return mWasDeletedFromOverBudget; }
+    // Accessor methods for getting and setting the the flags for the indicating the texture VRAM and System RAM states
+    void setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES new_state) { mMemoryOverBudgetState |= new_state; }
+    void setMemoryOverBudgetState(S32 new_state) { mMemoryOverBudgetState = new_state; }    
+    S32 getMemoryOverBudgetState() { return mMemoryOverBudgetState; }
+    void setPreviousMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES new_state) { mMemoryOverBudgetState |= new_state; }
+    void setPreviousMemoryOverBudgetState(S32 new_state) { mPreviousMemoryOverBudgetState = new_state; }
+    S32  getPreviousMemoryOverBudgetState() { return mPreviousMemoryOverBudgetState; }
+    // Delay added to resuming normal usage after Memory Over Budget
     void setDelayToNormalUseAfterOverBudget(F32 delay) { mDelayToNormalUseAfterOverBudget = delay; }
     F32 getDelayToNormalUseAfterOverBudget() { return mDelayToNormalUseAfterOverBudget; }
+    bool updateImageDecodePriority();
+
     // </FS:minerjr>
     /*virtual*/bool  isActiveFetching() override; //is actively in fetching by the fetching pipeline.
 
@@ -514,8 +554,11 @@ protected:
     bool mIsFetching;               // Fetch request is active
     bool mCanUseHTTP;              //This texture can be fetched through http if true.
     // <FS:minerjr>
-    mutable bool mWasDeletedFromOverBudget; // Flag to determine if a texture was deleted in the previous over VRAM over budget, used to hold of on creating a higher res too soon. Could be modified by another tread.
-    F32 mDelayToNormalUseAfterOverBudget; // Time to wait for returning to normal texture adjustments for larger resolution requests after being over VRAM budget
+    // Store the textures current memory over budget state (
+    mutable S32 mMemoryOverBudgetState;
+    // Store the textures previous memory over budget state
+    mutable S32 mPreviousMemoryOverBudgetState;
+    F32 mDelayToNormalUseAfterOverBudget; // Time to wait for returning to normal texture adjustments for larger resolution requests after being over memory budget
     // </FS:minerjr>
     LLCore::HttpStatus mLastHttpGetStatus; // Result of the most recently completed http request for this texture.
 

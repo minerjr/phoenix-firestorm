@@ -93,6 +93,8 @@ F32 LLViewerTexture::sDesiredDiscardBias = 0.f;
 
 // <FS:minerjr>
 F32 LLViewerTexture::sPreviousDesiredDiscardBias = 0.f; // Init the static value of the previous discard bias, used to know what direction the bias is going, up, down or staying the same
+F32 LLViewerTexture::sDesiredDiscardVRAMBias = 0.f; // Init the static value of the VRAM discard bias
+F32 LLViewerTexture::sPreviousDesiredDiscardVRAMBias = 0.f;  // Init the static value of the previous VRAM discard bias
 F32 LLViewerTexture::sOverMemoryBudgetStartTime = 0.0f; // Init the static time when system first went over VRAM budget
 F32 LLViewerTexture::sOverMemoryBudgetEndTime = 0.0f; // Init the static time when the system finally reached a normal memory amount
 S32 LLViewerTexture::sNumberOfDeletedTextures = 0; // Used to track the number of deleted textures (for debugging)
@@ -1165,10 +1167,6 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mRequestedDownloadPriority = 0.f;
     mFullyLoaded = false;
     mCanUseHTTP = true;
-    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    mWasDeletedFromOverBudget = false; // Default the flag used to track if this texture was "deleted" from VRAM over budget
-    mDelayToNormalUseAfterOverBudget = 0.0f; // Default the delay to normal use after over budget to 0 as we don't want to accidently have a delay during normal operations
-    // </FS:minerjr> [FIRE-35011]
     mDesiredDiscardLevel = MAX_DISCARD_LEVEL + 1;
     mMinDesiredDiscardLevel = MAX_DISCARD_LEVEL + 1;
 
@@ -1216,7 +1214,19 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mKeptSavedRawImageTime = 0.f;
     mLastCallBackActiveTime = 0.f;
     mForceCallbackFetch = false;
-
+    mMaxVirtualSizeResetInterval = 1;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    mMemoryOverBudgetState         = TEXTURE_MEMORY_STATES::MEMORY_NORMAL; // Default the memory over budget flag to MEMORY_NORMAL
+    mPreviousMemoryOverBudgetState = TEXTURE_MEMORY_STATES::MEMORY_NORMAL; // Default the previous memory over budget flag to MEMORY_NORMAL
+    mNumberOfReferencesInFrustrum  = 0;                                    // Set the number of references in frustrum to 0
+    mPreviousNumberOfReferencesInFrustrum = 0;                             // Set the previous number of references in frustrum to 0
+    mMinDistanceSquaredToCamera           = 9999999999.0f; // Set the min distance sequare for the camera to a very large number
+    mMinDistanceSquaredToCamera           = 9999999999.0f; // Set the previous min distance sequared for the camera to a very large number
+    mDelayToNormalUseAfterOverBudget = 0.0f; // Default the delay to normal use after over budget to 0 as we don't want to accidently have a delay during normal operations    
+    mMaxVirtualSizeResetCounter = mMaxVirtualSizeResetInterval; // Add the max virtual size reset counter back in for the viewer texture
+    mPreviousMaxVirtualSizeResetInterval = mMaxVirtualSizeResetInterval; // Set the previous max virtual size reset interval to the value
+    // </FS:minerjr> [FIRE-35011]
+    
     mFTType = FTT_UNKNOWN;
 }
 
@@ -1780,7 +1790,20 @@ void LLViewerFetchedTexture::processTextureStats()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(!gCubeSnapshot);  // should only be called when the main camera is active
     llassert(!LLPipeline::sShadowRender);
-
+    // <FS:minerjr>
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // If we are using the bias adjustments
+    if (use_new_bias_adjustments)
+    {
+        // Decrease the current virtual size reset counter by 1 and check to see if the counter finished counting down,
+        // if not return and skip this update (Counter is only done once it reaches 0)
+        if (--mMaxVirtualSizeResetCounter > 0)
+        {
+            return;
+        }
+    }
+    // </FS:minerjr>
     if(mFullyLoaded)
     {
         if(mDesiredDiscardLevel > mMinDesiredDiscardLevel)//need to load more
@@ -1907,6 +1930,205 @@ void LLViewerFetchedTexture::setBoostLevel(S32 level)
     {
         mDesiredDiscardLevel = 0;
     }
+}
+
+// <FS:minerjr>
+bool LLViewerFetchedTexture::updateImageDecodePriority()
+{
+    // If we are in the delay state, then check if
+    if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY))
+    {
+        // If we have not pased the time to go back to normal, then just return false
+        if (mDelayToNormalUseAfterOverBudget <= sCurrentTime)
+        {
+            return false;
+        }
+        // Else, we passed the delay, so now we can reset the texture status and continue
+        else
+        {
+            // Check to see if both of the System RAM or VRAM bais are set to normal (1.0f)
+            // If so, reset the text back to normal state
+            if (sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
+            {
+                // Set the memory over budget value to
+                setMemoryOverBudgetState(TEXTURE_MEMORY_STATES::MEMORY_NORMAL);
+                // Reset the delay to normal use after over budget to 0.0
+                mDelayToNormalUseAfterOverBudget = 0.0f;
+                // Restore the normal texture update interval
+                setMaxVirtualSizeResetInterval(getPreviousMaxVirtualSizeResetInterval());
+                // Reset the interval
+                resetMaxVirtualSizeResetCounter();
+            }
+            // Else, clear the delay flag again so that the texture can reapply the delay if needed
+            else
+            {
+                mMemoryOverBudgetState &= ~TEXTURE_MEMORY_STATES::DELAY_RECOVERY;
+            }
+            // We will do the following below to update the texture again to possibly even smaller then before and add another delay
+        }
+    }
+
+    // First get the min distance to the camera delta
+    F32 minDistanceToCameraDelta = mPreviousMinDistanceSquaredToCamera - mMinDistanceSquaredToCamera;
+    // Get the camera far plan and store the square of it (Prevent function call being called twice)
+    F32 cameraFarDistanceSquared = LLViewerCamera::getInstance()->getFar();
+    cameraFarDistanceSquared     = cameraFarDistanceSquared * cameraFarDistanceSquared;
+
+    // Now we check to see number of references in frustrum is greater then 1024, and if so
+    if (mNumberOfReferencesInFrustrum > 1024)
+    {
+        // Set the current texture boost level the BOOST:HIGH
+        setBoostLevel(LLViewerFetchedTexture::BOOST_HIGH);
+    }
+
+    // Get the max virtual size possible
+    static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
+    // sanity clamp debug setting to avoid settings hack shenanigans
+    F32 tex_res = (F32)llclamp((S32)max_texture_resolution, 512, 2048);
+    tex_res *= tex_res;
+    mMaxVirtualSizePossible = tex_res; // Set the current Max Virtual Size Possible to the Render max Texture Resolution. (Should be actual
+                                       // texture max, may change later on)
+
+    // Get the textures full res flag
+    static LLCachedControl<bool> textures_fullres(gSavedSettings, "TextureLoadFullRes", false);
+
+    // Set the the current texture scale size to 0.0 if there were no textures in the frustrum, otherwize set it to 1.0 as a default
+    F32 textureScaleSize = (mNumberOfReferencesInFrustrum == 0) ? 0.0f : 1.0f;
+
+    // If the texture is flagged to be full screen or boosted, override the scale value to 1.0 even if it is currently on off screen.
+    if (textures_fullres || getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)
+    {
+        textureScaleSize = 1.0f;
+    }
+    // Else if the camera far distance is valid (no div by zeros) and there is at least 1 texture in screen, then
+    else if (cameraFarDistanceSquared != 0.0f && mNumberOfReferencesInFrustrum > 0)
+    {
+        // Set the texture scale to the max value 1.0 minus the current distance to the camera divided by the far distance
+        // to get the distance of the object percetage to what is viewable by the player as long as there was at least object
+        // with the texture in the frustrum. So 1.0 is as largest scale factor of a texture and 0.0 is the smallest
+        textureScaleSize = 1.0f - (mMinDistanceSquaredToCamera / cameraFarDistanceSquared);
+    }
+
+    // Now check to see if there is an emergency due to low System RAM (Desired Discard bias 1.0 = OK, > 1.0 up to 4.0 max bad)
+    // and the current texture is not boosted to HIGH and this is the first time this texture is being adjusted
+    if (sDesiredDiscardBias > 1.0f && (!textures_fullres && getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH))
+    {
+        // If the texture is an LOD texture and the image is not boosteded, then
+        if (getType() == LLViewerTexture::LOD_TEXTURE && getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        {
+            // If there is a desired discard bias greater then 1.5 drop the quality of any testure even ones on screen.
+            if (LLViewerTexture::sDesiredDiscardBias > 1.5f)
+            {
+                // Set the exture scale size to 0.0
+                textureScaleSize = 0.0f;
+                // Flag that we want to delete the texture due to being over budget
+                setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::RAM_LOW_DELETED);
+            }
+            // Else, if the bias is greater then 1.0 so scale the texture down
+            else
+            {
+                // Take the current texture scale size and further scale it down by the bias amount
+                textureScaleSize /= LLViewerTexture::sDesiredDiscardBias;
+                // Flag that we want to scale down the texture
+                mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_SCALED_DOWN;
+            }
+        }
+        // Else for all other types of textures if the desired discard value is greate then 2.0
+        // and there are at least 1 references to the texture in the current frustrum
+        else if (sDesiredDiscardBias > 2.0f && mNumberOfReferencesInFrustrum > 0)
+        {
+            // Take the current texture scale size and further scale it down by the bias amount as well.
+            textureScaleSize /= LLViewerTexture::sDesiredDiscardBias;
+            // Flag that we want to scale down the texture
+            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_SCALED_DOWN;
+        }
+        // Finall if the desired discard bias is greater then 2.0, then
+        else if (sDesiredDiscardBias > 2.0f)
+        {
+            // Set the exture scale size to 0.0
+            textureScaleSize = 0.0f;
+            // Flag that we want to delete the texture due to being over budget
+            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_DELETED;
+        }
+        else
+        {
+            // Set the texture to be in the low System RAM state, but no change was made
+            mMemoryOverBudgetState |= TEXTURE_MEMORY_STATES::RAM_LOW_NO_CHANGE;
+        }
+    }
+
+    // Also check to see if there is an emergency due to low Video RAM (Desired Discard VRAM bias 1.0 = OK, > 1.0 up to 4.0 max bad)
+    if (sDesiredDiscardVRAMBias > 1.0f)
+    {
+        //
+    }
+    // If the memory over budget state is not set to normal and the memory is currently normal, then
+    if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL && sDesiredDiscardBias == 1.0f && sDesiredDiscardVRAMBias == 1.0f)
+    {
+        // If the texture is not in delay recovery mode
+        if ((mMemoryOverBudgetState & TEXTURE_MEMORY_STATES::DELAY_RECOVERY) == false)
+        {
+            // Set the memory over budget flag to DELAY_RECOVERY
+            setMemoryOverBudgetStateFlag(TEXTURE_MEMORY_STATES::DELAY_RECOVERY);
+            // Set the delay to update this texture to 1 second in advance
+            mDelayToNormalUseAfterOverBudget = sCurrentTime + 1.0f;
+            // If there are not a lot of these in the sceen, less then 3, further push out the delay
+            if (mNumberOfReferencesInFrustrum < 3)
+            {
+                // Add 3 more seconds
+                mDelayToNormalUseAfterOverBudget += 3.0f;
+            }
+            // IF there are no textures in the scene, then add further delay
+            if (mNumberOfReferencesInFrustrum == 0)
+            {
+                // Add 5 more seconds
+                mDelayToNormalUseAfterOverBudget += 5.0f;
+            }
+        }
+    }
+
+    // Store the new texture size based upon the max virtual size possible times the new texture scale size
+    addTextureStats(mMaxVirtualSizePossible * textureScaleSize);
+
+    // Check to see if we are in memory over budget state
+    if (mMemoryOverBudgetState != TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
+    {
+        // If this is the first time that we had the texture go over memory 
+        if (mPreviousMemoryOverBudgetState == TEXTURE_MEMORY_STATES::MEMORY_NORMAL)
+        {
+            // Store the current max virtual size reset interval in the previous one
+            setPreviousMaxVirtualSizeResetInterval(mMaxVirtualSizeResetInterval);
+            // If the number of references increased from the last frame
+            if (mNumberOfReferencesInFrustrum > mPreviousNumberOfReferencesInFrustrum)
+            {
+                // Add 2 more frames before an update
+                mMaxVirtualSizeResetInterval += 2;
+            }
+            // If the texture is no longer in screen but was previous
+            else if (mNumberOfReferencesInFrustrum == 0 && mPreviousNumberOfReferencesInFrustrum > 0)
+            {
+                // Add 10 more frames before an update
+                mMaxVirtualSizeResetInterval += 10;
+            }
+            else
+            {
+                // Else, add a delay of 5 frames 
+                mMaxVirtualSizeResetInterval += 5;
+            }
+        }
+    }
+
+    // Update the previous values to the current values
+    mPreviousMemoryOverBudgetState = mMemoryOverBudgetState; // Store the Memory over budget state
+    mPreviousNumberOfReferencesInFrustrum = mNumberOfReferencesInFrustrum; // Store the number of references in frustrum
+    mPreviousMinDistanceSquaredToCamera = mMinDistanceSquaredToCamera; // Store the min distance squared to the camera
+    // Reset the values for next update
+    mNumberOfReferencesInFrustrum = 0; // Reset the number of references in frustrum to 0
+    // The set min distance squared to the camera to the cameras current far plane, and store of the square of it
+    mMinDistanceSquaredToCamera   = LLViewerCamera::getInstance()->getFar();
+    mMinDistanceSquaredToCamera *= mMinDistanceSquaredToCamera;
+
+    return true;
 }
 
 bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 current_discard, S32 fetch_discard, F32 decode_priority)
@@ -2106,6 +2328,7 @@ bool LLViewerFetchedTexture::updateFetch()
     S32 desired_discard = getDesiredDiscardLevel();
     F32 decode_priority = mMaxVirtualSize;
 
+    /*
     // IF the texture was deleted before and still waiting to return to normal, set the texture to 1 lower quality, to try to make it fit
     // better in
     if (mWasDeletedFromOverBudget && desired_discard < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
@@ -2113,6 +2336,7 @@ bool LLViewerFetchedTexture::updateFetch()
     {
         desired_discard = MAX_DISCARD_LEVEL - 1;
     }
+    */
 
     if (mIsFetching)
     {
@@ -2160,7 +2384,7 @@ bool LLViewerFetchedTexture::updateFetch()
     }
 
     desired_discard = llmin(desired_discard, getMaxDiscardLevel());
-
+    /*
     // IF the texture was deleted before and still waiting to return to normal, set the texture to 1 lower quality, to try to make it fit
     // better in
     if (mWasDeletedFromOverBudget && desired_discard < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
@@ -2168,7 +2392,7 @@ bool LLViewerFetchedTexture::updateFetch()
     {
         desired_discard = MAX_DISCARD_LEVEL - 1;
     }
-
+    */
     bool make_request = true;
     if (decode_priority <= 0)
     {
@@ -3066,6 +3290,20 @@ void LLViewerLODTexture::init(bool firstinit)
     mTexelsPerImage = 64*64;
     mDiscardVirtualSize = 0.f;
     mCalculatedDiscardLevel = -1.f;
+    mMaxVirtualSizeResetInterval = 1;
+    mMaxVirtualSizeResetCounter  = mMaxVirtualSizeResetInterval;
+
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    mMemoryOverBudgetState = TEXTURE_MEMORY_STATES::MEMORY_NORMAL; // Default the memory over budget flag to MEMORY_NORMAL
+    mPreviousMemoryOverBudgetState = TEXTURE_MEMORY_STATES::MEMORY_NORMAL; // Default the previous memory over budget flag to MEMORY_NORMAL
+    mNumberOfReferencesInFrustrum = 0; // Set the number of references in frustrum to 0
+    mPreviousNumberOfReferencesInFrustrum = 0; // Set the previous number of references in frustrum to 0
+    mMinDistanceSquaredToCamera = 9999999999.0f; // Set the min distance sequare for the camera to a very large number
+    mMinDistanceSquaredToCamera = 9999999999.0f; // Set the previous min distance sequared for the camera to a very large number
+    mDelayToNormalUseAfterOverBudget = 0.0f; // Default the delay to normal use after over budget to 0 as we don't want to accidently have a delay during normal operations
+    mMaxVirtualSizeResetCounter = mMaxVirtualSizeResetInterval; // Add the max virtual size reset counter back in for the viewer texture
+    mPreviousMaxVirtualSizeResetInterval = mMaxVirtualSizeResetInterval; // Set the previous max virtual size reset interval to the value
+    // </FS:minerjr> [FIRE-35011]
 }
 
 //virtual
@@ -3084,15 +3322,39 @@ bool LLViewerLODTexture::isUpdateFrozen()
 void LLViewerLODTexture::processTextureStats()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    // <FS:minerjr>
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // If we are using the bias adjustments
+    if (use_new_bias_adjustments)
+    {
+        // Decrease the current virtual size reset counter by 1 and check to see if the counter finished counting down,
+        // if not return and skip this update (Counter is only done once it reaches 0)
+        if (--mMaxVirtualSizeResetCounter > 0)
+        {
+            // selection manager will immediately reset BOOST_SELECTED but never unsets it
+            // unset it immediately after we consume it
+            if (getBoostLevel() == BOOST_SELECTED)
+            {
+                setBoostLevel(BOOST_NONE);
+            }
+
+            return;
+        }
+        // Else, we can operate normally
+        else
+        {
+            // Reset the max virutal size reset counter
+            resetMaxVirtualSizeResetCounter();
+        }
+    }
+    // </FS:minerjr>
+
     updateVirtualSize();
 
     bool did_downscale = false;
 
     static LLCachedControl<bool> textures_fullres(gSavedSettings,"TextureLoadFullRes", false);
-    // <FS:minerjr>
-    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
-    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
-    // </FS:minerjr>
 
     { // restrict texture resolution to download based on RenderMaxTextureResolution
         static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
@@ -3102,6 +3364,8 @@ void LLViewerLODTexture::processTextureStats()
         mMaxVirtualSize = llmin(mMaxVirtualSize, tex_res);
     }
 
+
+    /*
     // <FS:minerjr>
     // So each texture has a was deleted from over budget flag that gets set once it has been deleted once during
     // the time the Bias > 1.0 and only gets reset once the Bias is at 1.0 again and there is a random delay that
@@ -3122,6 +3386,8 @@ void LLViewerLODTexture::processTextureStats()
                 mDelayToNormalUseAfterOverBudget = 0.0f;
                 // Reset the was deleted from over budget as we are back to normal
                 mWasDeletedFromOverBudget = false;
+                // Reset the max virtual reset interval to the value from before the over budget time
+                setMaxVirtualSizeResetInterval(mPreviousMaxVirtualSizeResetInterval);
                 
                 sNumberOfDeletedTextures--;
                 LL_INFOS() << "Delay Removed: " << getID() << LL_ENDL;
@@ -3149,18 +3415,17 @@ void LLViewerLODTexture::processTextureStats()
         // Reset the was deleted from over budget as we are back to normal
         mWasDeletedFromOverBudget = false;
         sNumberOfDeletedTextures--;
+        //Reset the max virtual reset interval to the value from before the over budget time
+        setMaxVirtualSizeResetInterval(mPreviousMaxVirtualSizeResetInterval);
 
         LL_INFOS() << "Delay Removed: " << getID() << LL_ENDL;
         // Let the system actually load the higher requested texture now
     }
+    */
 
     if (textures_fullres)
     {
         mDesiredDiscardLevel = 0;
-        if (mWasDeletedFromOverBudget)
-        {
-            LL_INFOS() << "1" << LL_ENDL;
-        }
     }
     // Generate the request priority and render priority
     else if (mDontDiscard || !mUseMipMaps)
@@ -3168,35 +3433,25 @@ void LLViewerLODTexture::processTextureStats()
         mDesiredDiscardLevel = 0;
         if (mFullWidth > MAX_IMAGE_SIZE_DEFAULT || mFullHeight > MAX_IMAGE_SIZE_DEFAULT)
             mDesiredDiscardLevel = 1; // MAX_IMAGE_SIZE_DEFAULT = 2048 and max size ever is 4096
-        if (mWasDeletedFromOverBudget)
-        {
-            LL_INFOS() << "2" << LL_ENDL;
-        }
     }
     else if (mBoostLevel < LLGLTexture::BOOST_HIGH && mMaxVirtualSize <= 10.f)
     {
         // If the image has not been significantly visible in a while, we don't want it
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, (S8)(MAX_DISCARD_LEVEL + 1));
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
-        if (mWasDeletedFromOverBudget)
-        {
-            LL_INFOS() << "3" << LL_ENDL;
-        }
     }
     else if (!mFullWidth  || !mFullHeight)
     {
         mDesiredDiscardLevel =  getMaxDiscardLevel();
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
-        if (mWasDeletedFromOverBudget)
-        {
-            LL_INFOS() << "4" << LL_ENDL;
-        }
     }
+    /*
     else if (sDesiredDiscardBias > 1.0 && mDesiredDiscardLevel < (MAX_DISCARD_LEVEL - 1) && mBoostLevel < LLGLTexture::BOOST_SCULPTED &&
         use_new_bias_adjustments)
     {
         mDesiredDiscardLevel = MAX_DISCARD_LEVEL - 1;
     }
+    */
     else
     {
         //static const F64 log_2 = log(2.0);
@@ -3218,9 +3473,13 @@ void LLViewerLODTexture::processTextureStats()
             discard_level = (F32)(log(mTexelsPerImage / draw_texels) / log_4);
         }
         else
-        {
+        {            
             // Calculate the required scale factor of the image using pixels per texel
-            discard_level = (F32)(log(mTexelsPerImage / mMaxVirtualSize) / log_4);
+            // <FS:minerjr>
+            // discard_level = (F32)(log(mTexelsPerImage / mMaxVirtualSize) / log_4);
+            // Add a check to make sure the max virtual size is not 0.0 to prevent an exception
+            discard_level = (F32)(log(mTexelsPerImage / (mMaxVirtualSize != 0.0f ? mMaxVirtualSize : 0.0001f)) / log_4);
+            // </FS:minerjr>
             mDiscardVirtualSize = mMaxVirtualSize;
             mCalculatedDiscardLevel = discard_level;
         }
@@ -3236,13 +3495,14 @@ void LLViewerLODTexture::processTextureStats()
         if (mFullWidth > desired_size || mFullHeight > desired_size)
             min_discard = 1.f;
 
+
         discard_level = llclamp(discard_level, min_discard, (F32)MAX_DISCARD_LEVEL);
 
         // Can't go higher than the max discard level
         mDesiredDiscardLevel = llmin(getMaxDiscardLevel() + 1, (S32)discard_level);
         // Clamp to min desired discard
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, mDesiredDiscardLevel);
-        if (mWasDeletedFromOverBudget)
+        if (mMemoryOverBudgetState)
         {
             LL_INFOS() << getID() << " DL:" << getDiscardLevel() << " DD:" << (S32)mDesiredDiscardLevel << LL_ENDL;
         }
@@ -3255,7 +3515,7 @@ void LLViewerLODTexture::processTextureStats()
         // During the time the Bias is greater then 0 or after it is back to 1.0, but the current texture was deleted we want to keep
         // setting the desired discard level to the min value. If the value is greater then the discard min, that means this texture
         // needs to be deleted by the underlying system, so don't modify it. Also, leave sculpted textures alone.
-        if ((mWasDeletedFromOverBudget) && discard_level < (MAX_DISCARD_LEVEL - 1) &&
+        if ((mMemoryOverBudgetState) && discard_level < (MAX_DISCARD_LEVEL - 1) &&
             mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED && use_new_bias_adjustments)
         {
             // Force texture to the lowest quality without being discarded.
@@ -3306,21 +3566,25 @@ bool LLViewerLODTexture::scaleDown()
     if (!mDownScalePending)
     {
         mDownScalePending = true;
+        /*
         // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
         static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
         // If the system is enbled, then actually set the was deleted flag
         if (use_new_bias_adjustments && LLViewerTexture::sDesiredDiscardBias > 1.0f)
         {
             // Set a flag that the texture was already deleted while being over VRAM budget
-            if (!mWasDeletedFromOverBudget)
+            if (!getWasDeletedFromOverBudget())
             {
                 sNumberOfDeletedTextures++;
+                //Delay by 1 to 10 seconds for the next request
                 F32 delay = lerp(1.0f, 10.0f, ll_frand());
                 mDelayToNormalUseAfterOverBudget = sCurrentTime + delay;
+                
                 LL_INFOS() << "Delay Added: " << getID() << " Delay: " << delay << LL_ENDL;
             }
             setWasDeletedFromOverBudget(true);            
         }
+        */
         gTextureList.mDownScaleQueue.push(this);
     }
 
