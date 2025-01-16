@@ -1075,8 +1075,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         if (LLViewerTexture::sOverMemoryBudgetState.States.UseBias == 0)
         {
-            bias = 1.0f;
+            //bias = 1.0f;
         }
+
+        float distance = 0.0f;
+        
 
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
         for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
@@ -1219,13 +1222,14 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
     }
     // <FS:minerjr>
-    else if (imagep->mTextureState & LLViewerTexture::ETextureStates::VRAM_SCALED_DOWN && imagep->getMaxVirtualSize() == 0.0f &&
-             imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
-    {
+    //else if (imagep->mTextureState & LLViewerTexture::ETextureStates::VRAM_SCALED_DOWN && imagep->getMaxVirtualSize() == 0.0f &&
+    //         imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+    //{
         // We are going to delete the image after scaling it down, so do it now.
         //deleteImage(imagep);
-    }
+   // }
     // </FS:minerjr>
+    else
     {
         // still referenced outside of image list, reset timer
         imagep->getLastReferencedTimer()->reset();
