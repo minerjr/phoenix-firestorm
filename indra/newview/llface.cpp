@@ -2321,7 +2321,7 @@ bool LLFace::calcPixelArea(F32& cos_angle_to_view_dir, F32& radius)
     // don't update every frame
     if (gFrameTimeSeconds - mLastPixelAreaUpdate < PIXEL_AREA_UPDATE_PERIOD)
     {
-        return true;
+        return mInFrustum;
     }
 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;

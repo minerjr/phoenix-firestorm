@@ -593,8 +593,10 @@ void LLViewerTexture::updateClass()
     static LLCachedControl<F32> minimized_discard_time(gSavedSettings, "TextureDiscardMinimizedTime", 1.f);
     static LLCachedControl<F32> backgrounded_discard_time(gSavedSettings, "TextureDiscardBackgroundedTime", 60.f);
 
-    bool in_background = (gViewerWindow && !gViewerWindow->getWindow()->getVisible()) || !gFocusMgr.getAppHasFocus();
-    bool is_minimized  = gViewerWindow && gViewerWindow->getWindow()->getMinimized() && in_background;
+    bool in_background = false;
+    //(gViewerWindow && !gViewerWindow->getWindow()->getVisible()) || !gFocusMgr.getAppHasFocus();
+    bool is_minimized = false;
+    //gViewerWindow && gViewerWindow->getWindow()->getMinimized() && in_background;
     if (in_background)
     {
         F32 discard_time = is_minimized ? minimized_discard_time : backgrounded_discard_time;
@@ -2782,6 +2784,11 @@ void LLViewerFetchedTexture::destroyRawImage()
 
         if(mIsRawImageValid)
         {
+            if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+            {
+                sRawCount++;
+                return;
+            }
             if(needsToSaveRawImage())
             {
                 saveRawImage();

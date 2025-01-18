@@ -819,7 +819,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gPipeline.mHeroProbeManager.update();
             gPipeline.mHeroProbeManager.renderProbes();
         }
-
+        // Static saved settings allowing to enable/disable the new bias adjustment feature
+        static LLCachedControl<bool> use_new_bias_adjustments2(gSavedSettings, "FSTextureNewBiasAdjustments2", false);
+        static LLCachedControl<F32>  new_bias_adjustments_multiplier(gSavedSettings, "FSTextureNewBiasAdjustmentsMultiplier", 2.5f);
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 1");
         LLAppViewer::instance()->pingMainloopTimeout("Display:Update");
         if (gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_HUD))
@@ -960,6 +962,16 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("List");
                 F32 max_image_decode_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
+                // <FS:minerjr>
+
+                // Due to the much higher amount of requests for fetchs, we should also give the thread more room to
+                // handle all the additional texture requests.
+                if ((LLViewerTexture::sDesiredDiscardBias > 1.0f) && use_new_bias_adjustments2)
+                {
+                    // Base the amount to decode textures by the current value of the desired discard bias times 2.5
+                    max_image_decode_time *= LLViewerTexture::sDesiredDiscardBias * new_bias_adjustments_multiplier;
+                }
+                // </FS:minerjr>
                 gTextureList.updateImages(max_image_decode_time);
             }
 

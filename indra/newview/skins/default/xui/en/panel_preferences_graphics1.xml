@@ -1230,7 +1230,45 @@ If you do not understand the distinction then leave this control alone."
          width="100">
             Second(s)
         </text>
-    </panel>
+        <check_box
+         control_name="FSTextureNewBiasAdjustments"
+         height="16"
+         label="Enable New Texture Bias Adjustments"
+         layout="topleft"
+         left="10"
+         name="FSTextureNewBiasAdjustments"
+         tool_tip=""
+         top_delta="20"
+         width="256" />	
+        <check_box
+         control_name="FSTextureNewBiasAdjustments2"
+         height="16"
+         label="Enable New Texture Bias Extra Texture Processing Time"
+         layout="topleft"
+         left="10"
+         name="FSTextureNewBiasAdjustments2"
+         tool_tip=""
+         top_delta="20"
+         width="256" />
+        <slider
+                 control_name="FSTextureNewBiasAdjustmentsMultiplier"
+                 tool_tip="Controls at what point a visually complex avatar is drawn as a JellyDoll"
+                 decimal_digits="0"
+                 follows="left|top"
+                 height="15"
+                 increment="0.1"
+                 initial_value="2.5"
+                 label="Extra Time"
+                 label_width="185"
+                 layout="topleft"
+                 left="200"
+                 max_val="100"
+                 min_val="1"
+                 show_text="false"
+                 name="FSTextureNewBiasAdjustmentsMultiplier"
+                 top_pad="3"
+                 width="281"/>
+        </panel>
 
 <!--Rendering-->
     <panel

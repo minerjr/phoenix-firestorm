@@ -117,6 +117,10 @@ void LLViewerTextureList::doPreloadImages()
     llassert_always(mInitialized) ;
     llassert_always(mImageList.empty()) ;
     llassert_always(mUUIDMap.empty()) ;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    // Clear out the mUUIDDeleteMap as well
+    llassert_always(mUUIDDeleteMap.empty());
+    // </FS:minerjr> [FIRE-35011]
 
     // Set the "missing asset" image
     LLViewerFetchedTexture::sMissingAssetImagep = LLViewerTextureManager::getFetchedTextureFromFile("missing_asset.tga", FTT_LOCAL_FILE, MIPMAP_NO, LLViewerFetchedTexture::BOOST_UI);
@@ -366,7 +370,9 @@ void LLViewerTextureList::shutdown()
     mFastCacheList.clear();
 
     mUUIDMap.clear();
-
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    mUUIDDeleteMap.clear(); // Clear the UUIDMap for delete textures
+    // </FS:minerjr> [FIRE-35011]
     mImageList.clear();
 
     mInitialized = false ; //prevent loading textures again.
@@ -689,6 +695,29 @@ void LLViewerTextureList::findTexturesByID(const LLUUID &image_id, std::vector<L
         output.push_back(iter->second);
         iter++;
     }
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // If we are using the new bias adjustments, then
+    if (use_new_bias_adjustments)
+    {
+        // Add the deleted images on to this list, 
+        uuid_map_t::iterator del_iter = mUUIDDeleteMap.lower_bound(search_key);
+        while (del_iter != mUUIDDeleteMap.end() && del_iter->first.textureId == image_id)
+        {
+            // Set the normal map to have the same image as the delete map
+            mUUIDMap[del_iter->first] = del_iter->second;
+            // Add the deleted image to the Image List
+            mImageList.insert(del_iter->second);
+            // Set the flag that the image is on the list to try
+            mUUIDMap[del_iter->first]->setInImageList(true);
+            output.push_back(del_iter->second);
+            // Remove the deleted texture from the delete UUID Map
+            mUUIDDeleteMap.erase(del_iter->first);
+            del_iter++;
+        }
+    }
+    // </FS:minerjr> [FIRE-35011]
 }
 
 LLViewerFetchedTexture *LLViewerTextureList::findImage(const LLTextureKey &search_key)
@@ -696,7 +725,30 @@ LLViewerFetchedTexture *LLViewerTextureList::findImage(const LLTextureKey &searc
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     uuid_map_t::iterator iter = mUUIDMap.find(search_key);
     if (iter == mUUIDMap.end())
+    {
+        // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+        // If the iterator reached the end, instead of returning null, try to see if the image exists on the deleted list
+        // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+        static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+        
+        // If the search_key exists on the delete map
+        if (mUUIDDeleteMap.count(search_key) == 1 && use_new_bias_adjustments)
+        {
+            // Set the normal map to have the same image as the delete map
+            mUUIDMap[search_key] = mUUIDDeleteMap[search_key];
+            // Add the deleted image to the Image List
+            mImageList.insert(mUUIDMap[search_key]);
+            // Set the flag that the image is on the list to try
+            mUUIDMap[search_key]->setInImageList(true);
+            // Remove the deleted texture from the delete UUID Map
+            mUUIDDeleteMap.erase(search_key);
+            // And return the found image
+            return mUUIDMap[search_key];
+        }
+        // Otherwise, return false as the image does not exist on either the normal or deleted lists
+        // </FS:minerjr> [FIRE-35011]
         return NULL;
+    }
     return iter->second;
 }
 
@@ -790,14 +842,22 @@ void LLViewerTextureList::addImage(LLViewerFetchedTexture *new_image, ETexListTy
     {
         LL_INFOS() << "Image with ID " << image_id << " already in list" << LL_ENDL;
     }
+    //
+    if (mUUIDDeleteMap.count(key) == 1)
+    {
+        // The key also exists on the delete list
+        // Remove the reference
+        mUUIDDeleteMap.erase(key);
+    }
     sNumImages++;
 
     addImageToList(new_image);
     mUUIDMap[key] = new_image;
     new_image->setTextureListType(tex_type);
 }
-
-
+        
+// <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+/*
 void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -813,7 +873,43 @@ void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
         removeImageFromList(image);
     }
 }
-
+*/
+// Added new mapping for storing deleted textures (The deleting and creating new textures is what is killing the system.
+void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    if( image)
+    {
+        // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+        static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+        // Do the old method of deleteing the call backs if using the old method, but we want to skip that in the
+        // new process
+        if (image->hasCallbacks() && !use_new_bias_adjustments)
+        {
+            mCallbackList.erase(image);
+        }
+        LLTextureKey key(image->getID(), (ETexListType)image->getTextureListType());
+        // Instead of deleting the object, what we want to do it move it over to the UUID Delete Map
+        if (use_new_bias_adjustments)
+        {            
+            // Check to see if the key exists on the delete list first, if not, then
+            if (mUUIDDeleteMap.count(key) == 0)
+            {
+                // Add the image to the delete UUIDMap
+                mUUIDDeleteMap[key] = image;
+            }
+            else
+            {
+                // We should clean up the one that is about to be replaced. (Should not happed)
+                mUUIDDeleteMap[key] = image;
+            }            
+        }        
+        llverify(mUUIDMap.erase(key) == 1);
+        sNumImages--;
+        removeImageFromList(image);
+    }
+}
+// </FS:minerjr> [FIRE-35011]
 ///////////////////////////////////////////////////////////////////////////////
 
 
@@ -875,6 +971,30 @@ void LLViewerTextureList::updateImages(F32 max_time)
         }
     }
 
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    /*
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+
+    // Currently we are no longer deleting the Texture Memory at all, just forcing all images to scale down.
+    // We can possibly have an emergency clear for the map of deleted textures if we spend over 2 minutes at high memory.
+    // But this may just re-introduce the issue with the deleting textures as it is.    
+    if (use_new_bias_adjustments && LLViewerTexture::sDesiredDiscardBias >= 4.0f && (LLViewerTexture::sCurrentTime - LLViewerTexture::sOverMemoryBudgetStartTime) > 120.0f)
+    {
+        // Need to purge any requests on the delete list
+        for (uuid_map_t::iterator iter = mUUIDDeleteMap.begin(); iter != mUUIDDeleteMap.end(); ++iter)
+        {
+            LLViewerFetchedTexture* imagep = iter->second;
+            if (imagep)
+            {
+                imagep->forceToDeleteRequest();
+            }
+        }
+        mUUIDDeleteMap.clear(); // Clear the UUIDMap for delete textures
+    }
+    */
+    // </FS:minerjr> [FIRE-35011]
+
     updateImagesUpdateStats();
 }
 
@@ -894,6 +1014,24 @@ void LLViewerTextureList::clearFetchingRequests()
         LLViewerFetchedTexture* imagep = *iter;
         imagep->forceToDeleteRequest() ;
     }
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    // Need to purge any requests on the delete list
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    // If we are using the new bias system
+    if (use_new_bias_adjustments)
+    {
+        // Iterator over all of the objects in the UUID Delete Map
+        for (uuid_map_t::iterator iter = mUUIDDeleteMap.begin(); iter != mUUIDDeleteMap.end(); ++iter)
+        {
+            LLViewerFetchedTexture* imagep = iter->second;
+            if (imagep)
+            {
+                imagep->forceToDeleteRequest();
+            }
+        }
+    }
+    // </FS:minerjr> [FIRE-35011]
 }
 
 extern bool gCubeSnapshot;
@@ -901,7 +1039,7 @@ extern bool gCubeSnapshot;
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
 {
     llassert(!gCubeSnapshot);
-
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments2", false);
     if (imagep->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)  // don't bother checking face list for boosted textures
     {
         static LLCachedControl<F32> texture_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.04f);
@@ -932,7 +1070,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     F32 radius;
                     F32 cos_angle_to_view_dir;
 
-                    if ((gFrameCount - face->mLastTextureUpdate) > 10)
+                    if ((gFrameCount - face->mLastTextureUpdate) > 10 * LLViewerTexture::sDesiredDiscardBias)
                     { // only call calcPixelArea at most once every 10 frames for a given face
                         // this helps eliminate redundant calls to calcPixelArea for faces that have multiple textures
                         // assigned to them, such as is the case with GLTF materials or Blinn-Phong materials
@@ -957,11 +1095,21 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
                     min_scale = llclamp(min_scale * min_scale, texture_scale_min(), texture_scale_max());
                     vsize /= min_scale;
-
-                    // apply bias to offscreen faces all the time, but only to onscreen faces when bias is large
-                    if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 2.f)
+                    if (use_new_bias_adjustments)
                     {
-                        vsize /= bias;
+                        // apply bias to offscreen faces all the time, but only to onscreen faces when bias is large
+                        if (!face->mInFrustum) //|| LLViewerTexture::sDesiredDiscardBias > 2.f)
+                        {
+                            vsize /= bias;
+                        }
+                    }
+                    else
+                    {
+                        // apply bias to offscreen faces all the time, but only to onscreen faces when bias is large
+                        if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 2.f)
+                        {
+                            vsize /= bias;
+                        }
                     }
 
                     // boost resolution of textures that are important to the camera
@@ -987,10 +1135,20 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
           // this is an alternative to decaying mMaxVirtualSize over time
           // that keeps textures from continously downrezzing and uprezzing in the background
 
-            if (LLViewerTexture::sDesiredDiscardBias > 1.5f ||
-                (!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
+            if (use_new_bias_adjustments)
             {
-                imagep->mMaxVirtualSize = 0.f;
+                if (LLViewerTexture::sDesiredDiscardBias > 1.5f) // ||
+                                                                 //(!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
+                {
+                    imagep->mMaxVirtualSize = 0.f;
+                }
+            }
+            else
+            {
+                if (LLViewerTexture::sDesiredDiscardBias > 1.5f || (!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
+                {
+                    imagep->mMaxVirtualSize = 0.f;
+                }
             }
         }
 
@@ -1201,7 +1359,7 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-
+    static F32 previous_bias = 1.0f;
     typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
     entries_list_t entries;
 
@@ -1214,13 +1372,27 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
-    if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+    // Saved Settings bool flag used to enable the newer system (Can be removed but good for testing and comparing)
+    static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+
+    if (use_new_bias_adjustments)
     {
-        // we are over memory target, update more agresively
-        update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
+        if (LLViewerTexture::sDesiredDiscardBias > 1.f )//&& previous_bias < LLViewerTexture::sDesiredDiscardBias)
+        {
+            // we are over memory target, update more agresively
+            update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
+        }
+    }
+    else
+    {
+        if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+        {
+            // we are over memory target, update more agresively
+            update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
+        }
     }
     update_count = llmin(update_count, (U32) mUUIDMap.size());
-
+    previous_bias = LLViewerTexture::sDesiredDiscardBias;
     { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
 
