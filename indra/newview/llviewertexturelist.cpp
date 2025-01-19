@@ -884,7 +884,7 @@ void LLViewerTextureList::deleteImage(LLViewerFetchedTexture *image)
         static LLCachedControl<bool> use_new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
         // Do the old method of deleteing the call backs if using the old method, but we want to skip that in the
         // new process
-        if (image->hasCallbacks() && !use_new_bias_adjustments)
+        if (image->hasCallbacks())
         {
             mCallbackList.erase(image);
         }

@@ -190,6 +190,9 @@ LLViewerPartGroup::LLViewerPartGroup(const LLVector3 &center_agent, const F32 bo
 
     mSkippedTime = 0.f;
 
+    // <FS:minerjr>
+
+    // </FS:minerjr>
     static U32 id_seed = 0;
     mID = ++id_seed;
 }
@@ -576,6 +579,15 @@ void LLViewerPartSim::destroyClass()
     }
     mViewerPartGroups.clear();
 
+    // Kill all of the groups (and particles)
+    count = (S32)mDeletedViewerPartGroups.size();
+    for (i = 0; i < count; i++)
+    {
+        delete mDeletedViewerPartGroups[i];
+    }
+    mDeletedViewerPartGroups.clear();
+    
+
     // Kill all of the sources
     mViewerPartSources.clear();
 }
@@ -686,6 +698,10 @@ LLViewerPartGroup *LLViewerPartSim::createViewerPartGroup(const LLVector3 &pos_a
 {
     //find a box that has a center position divisible by PART_SIM_BOX_SIDE that encompasses
     //pos_agent
+    if (mDeletedViewerPartGroups.size() > 0)
+    {
+        // Check if the deleted object already exists
+    }
     LLViewerPartGroup *groupp = new LLViewerPartGroup(pos_agent, desired_size, hud);
     mViewerPartGroups.push_back(groupp);
     return groupp;

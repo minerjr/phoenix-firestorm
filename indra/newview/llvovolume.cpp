@@ -842,7 +842,17 @@ void LLVOVolume::animateTextures()
 void LLVOVolume::updateTextures()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    updateTextureVirtualSize();
+    // <FS:minerjr>
+    static LLCachedControl<bool> new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+    if (new_bias_adjustments && LLViewerTexture::sOverMemoryBudgetState.States.Normal)
+    {
+        updateTextureVirtualSize();
+    }
+    else if (!new_bias_adjustments)
+    {
+        updateTextureVirtualSize();
+    }
+    // <FS:minerjr>
 }
 
 bool LLVOVolume::isVisible() const
@@ -902,7 +912,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
     static LLCachedControl<bool> dont_load_textures(gSavedSettings,"TextureDisable", false);
 
-    if (dont_load_textures || LLAppViewer::getTextureFetch()->mDebugPause) // || !mDrawable->isVisible())
+    if (dont_load_textures || LLAppViewer::getTextureFetch()->mDebugPause || LLViewerTexture::sOverMemoryBudgetState.States.UseBias) // || !mDrawable->isVisible())
     {
         return;
     }
@@ -948,6 +958,12 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
         F32 vsize;
         F32 old_size = face->getVirtualSize();
+        // get adjusted bias based on image resolution
+        F32 max_discard = F32(imagep->getMaxDiscardLevel());
+        F32 bias        = llclamp(max_discard - 2.f, 1.f, LLViewerTexture::sDesiredDiscardBias);
+
+        // convert bias into a vsize scaler
+        bias = (F32)llroundf(powf(4, bias - 1.f));
 
         if (isHUDAttachment())
         {
@@ -960,6 +976,15 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         else
         {
             vsize = face->getTextureVirtualSize();
+            if (imagep->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)
+            {
+                // apply bias to offscreen faces all the time, but only to onscreen faces when bias is large
+                if (!face->mInFrustum || LLViewerTexture::sDesiredDiscardBias > 2.f)
+                {
+                    vsize /= bias;
+                }
+
+            }
         }
 
         mPixelArea = llmax(mPixelArea, face->getPixelArea());
@@ -6015,8 +6040,17 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
                 }
             }
             // </FS:AO>
-
-            vobj->updateTextureVirtualSize(true);
+            // <FS:minerjr>
+            static LLCachedControl<bool> new_bias_adjustments(gSavedSettings, "FSTextureNewBiasAdjustments", false);
+            if (new_bias_adjustments && LLViewerTexture::sOverMemoryBudgetState.States.UseBias)
+            {
+                vobj->updateTextureVirtualSize();
+            }
+            else if (!new_bias_adjustments)
+            {
+                vobj->updateTextureVirtualSize();
+            }
+            // <FS:minerjr>
             vobj->preRebuild();
 
             drawablep->clearState(LLDrawable::HAS_ALPHA);

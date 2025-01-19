@@ -653,10 +653,10 @@ void LLGLTexMemBar::draw()
 
     gl_rect_2d(left, top, right, bottom, color);
     // </FS:Beq>
-
-    text = llformat("Images: %d   Raw: %d (%.2f MB)  Saved: %d (%.2f MB) Aux: %d (%.2f MB)", image_count, raw_image_count, raw_image_bytes_MB,
-        saved_raw_image_count, saved_raw_image_bytes_MB,
-        aux_raw_image_count, aux_raw_image_bytes_MB);
+    S32 deleted_textures_count = gTextureList.getNumDeletedImages();
+    text = llformat("Images: %d   Raw: %d (%.2f MB)  Saved: %d (%.2f MB) Aux: %d (%.2f MB) Deleted: %d", image_count, raw_image_count, raw_image_bytes_MB,
+        saved_raw_image_count, saved_raw_image_bytes_MB, aux_raw_image_count, aux_raw_image_bytes_MB,
+                    deleted_textures_count);
     LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0, v_offset + line_height * 7,
         text_color, LLFontGL::LEFT, LLFontGL::TOP);
 

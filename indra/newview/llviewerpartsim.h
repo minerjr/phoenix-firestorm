@@ -79,7 +79,6 @@ public:
     F32             mEndGlow;
     LLColor4U       mGlow;
 
-
     static U32      sNextPartID;
 };
 
@@ -108,6 +107,7 @@ public:
 
     typedef std::vector<LLViewerPart*>  part_list_t;
     part_list_t mParticles;
+    S32 mNumberOfAliveParticles;
 
     const LLVector3 &getCenterAgent() const     { return mCenterAgent; }
     S32 getCount() const                    { return (S32) mParticles.size(); }
@@ -193,6 +193,7 @@ protected:
     LLViewerPartGroup *put(LLViewerPart* part);
 
     group_list_t mViewerPartGroups;
+    group_list_t  mDeletedViewerPartGroups;
     source_list_t mViewerPartSources;
     LLFrameTimer mSimulationTimer;
 
