@@ -38,6 +38,9 @@ class LLViewerRegion;
 class LLVOPartGroup;
 
 #define LL_MAX_PARTICLE_COUNT 8192
+// <FS:minerjr>
+#define LL_DELAY_AFTER_NO_PARTICLES 10.0f
+// </FS:minerjr>
 
 typedef void (*LLVPCallback)(LLViewerPart &part, const F32 dt);
 
@@ -122,6 +125,9 @@ public:
 
     F32 mSkippedTime;
     bool mHud;
+    // <FS:minerjr>
+    F32  mLastParticleAliveTime;
+    // </FS:minerjr>
 
 protected:
     LLVector3 mCenterAgent;
@@ -175,6 +181,12 @@ public:
 
     const source_list_t* getParticleSystemList() const { return &mViewerPartSources; }
 
+    // <FS:minerjr>
+    LLViewerPart* getFreeParticle();
+    bool releaseParticle(LLViewerPart* part);
+    bool releaseParticles(LLViewerPartGroup::part_list_t removeList);
+    // </FS:minerjr>
+
     friend class LLViewerPartGroup;
 
     bool aboveParticleLimit() const { return sParticleCount > sMaxParticleCount; }
@@ -195,6 +207,9 @@ protected:
     group_list_t mViewerPartGroups;
     source_list_t mViewerPartSources;
     LLFrameTimer mSimulationTimer;
+    // <FS:minerjr>
+    static LLViewerPartGroup::part_list_t mParticlesPool;
+    // </FS:minerjr>
 
     static S32 sMaxParticleCount;
     static std::atomic<S32> sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch

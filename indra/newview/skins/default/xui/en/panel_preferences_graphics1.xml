@@ -1230,6 +1230,16 @@ If you do not understand the distinction then leave this control alone."
          width="100">
             Second(s)
         </text>
+		<check_box
+         control_name="FSUseParticlePool"
+         height="16"
+         label="Use the new particle pool to reduce the amount of memory opterations."
+         layout="topleft"
+         left="10"
+         name="FSUseParticlePool"
+         tool_tip=""
+         top_delta="20"
+         width="256" />	
     </panel>
 
 <!--Rendering-->

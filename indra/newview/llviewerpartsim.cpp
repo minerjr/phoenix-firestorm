@@ -62,8 +62,11 @@ const F32 LLViewerPartSim::PART_ADAPT_RATE_MULT = 2.0f;
 const F32 LLViewerPartSim::PART_THROTTLE_RESCALE = PART_THROTTLE_THRESHOLD / (1.0f-PART_THROTTLE_THRESHOLD);
 const F32 LLViewerPartSim::PART_ADAPT_RATE_MULT_RECIP = 1.0f/PART_ADAPT_RATE_MULT;
 
-
-U32 LLViewerPart::sNextPartID = 1;
+// <FS:minerjr>
+//U32 LLViewerPart::sNextPartID = 1;
+LLViewerPartGroup::part_list_t LLViewerPartSim::mParticlesPool;
+U32 LLViewerPart::sNextPartID = 0;
+// </FS:minerjr>
 
 F32 calc_desired_size(LLViewerCamera* camera, LLVector3 pos, LLVector2 scale)
 {
@@ -73,15 +76,20 @@ F32 calc_desired_size(LLViewerCamera* camera, LLVector3 pos, LLVector2 scale)
 }
 
 LLViewerPart::LLViewerPart() :
-    mPartID(0),
+    mPartID(LLViewerPart::sNextPartID),
     mLastUpdateTime(0.f),
     mSkipOffset(0.f),
     mVPCallback(NULL),
-    mImagep(NULL)
+    mImagep(NULL),
+    mStartGlow(0.0f),
+    mEndGlow(0.0f)
 {
     mPartSourcep = NULL;
     mParent = NULL;
     mChild = NULL;
+    // <FS:minerjr>
+    LLViewerPart::sNextPartID++;
+    // </FS:minerjr>
     ++LLViewerPartSim::sParticleCount2 ;
 }
 
@@ -112,8 +120,10 @@ LLViewerPart::~LLViewerPart()
 
 void LLViewerPart::init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *imagep, LLVPCallback cb)
 {
-    mPartID = LLViewerPart::sNextPartID;
-    LLViewerPart::sNextPartID++;
+    // <FS:minerjr>
+    //mPartID = LLViewerPart::sNextPartID;
+    //LLViewerPart::sNextPartID++;
+    // </FS:minerjr>
     mFlags = 0x00f;
     mLastUpdateTime = 0.f;
     mMaxAge = 10.f;
@@ -199,10 +209,13 @@ LLViewerPartGroup::~LLViewerPartGroup()
     cleanup();
 
     S32 count = (S32) mParticles.size();
-    for(S32 i = 0 ; i < count ; i++)
-    {
-        delete mParticles[i] ;
-    }
+    // <FS:minerjr>
+    //for(S32 i = 0 ; i < count ; i++)
+    //{
+    //    delete mParticles[i];        
+    //}
+    LLViewerPartSim::getInstance()->releaseParticles(mParticles);
+    // </FS:minerjr>
     mParticles.clear();
 
     LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
@@ -408,7 +421,11 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
             // delete part ;
             vector_replace_with_last(mParticles, mParticles.begin() + i);
             --LLViewerPartSim::sParticleCount; 
-            delete part ;
+            // <FS:minerjr>
+            //delete part ;
+            // Relase the particle
+            LLViewerPartSim::getInstance()->releaseParticle(part);
+            // </FS:minerjr>
             changed = true; 
             // </FS:Beq>
         }
@@ -436,6 +453,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
                 i++ ;
             }
         }
+        mLastParticleAliveTime = 0.0f;
     }
 
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch
@@ -461,8 +479,21 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     // Kill the viewer object if this particle group is empty
     if (mParticles.empty())
     {
-        gObjectList.killObject(mVOPartGroupp);
-        mVOPartGroupp = NULL;
+        // <FS:minerjr>
+        //gObjectList.killObject(mVOPartGroupp);
+        //mVOPartGroupp = NULL;
+        // If the time since the last particles was alive is longer then the max delaye
+        if (mLastParticleAliveTime < LL_DELAY_AFTER_NO_PARTICLES)
+        {
+            // Add the current elapsed time to the last particle alive time
+            mLastParticleAliveTime += lastdt;
+        }
+        // Else, no particles have been added to this group in the LL_DELAY_AFTER_NO_PARTICLES time, so it can be killed
+        else
+        {
+            gObjectList.killObject(mVOPartGroupp);
+            mVOPartGroupp = NULL;
+        }
     }
 
     LLViewerPartSim::checkParticleCount() ;
@@ -546,6 +577,10 @@ LLViewerPartSim::LLViewerPartSim()
     sMaxParticleCount = llmin(gSavedSettings.getS32("RenderMaxPartCount"), LL_MAX_PARTICLE_COUNT);
     static U32 id_seed = 0;
     mID = ++id_seed;
+    // <FS:minerjr>
+    mParticlesPool.resize(LL_MAX_PARTICLE_COUNT);
+    sParticleCount = 0;
+    // </FS:minerjr>
 }
 
 //enable/disable particle system
@@ -609,7 +644,8 @@ bool LLViewerPartSim::shouldAddPart()
 
     return true;
 }
-
+// <FS:minerjr>
+/*
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
@@ -623,7 +659,19 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
         part = NULL ;
     }
 }
-
+*/
+// Checks to see if a parcile can be added
+void LLViewerPartSim::addPart(LLViewerPart* part)
+{
+    // Can only get a pointer to a viewer particle if there is a free particle
+    // So if the pointer is not NULL, it should be valid
+    if (part != NULL)
+    {
+        // Add the particle to one of the groups
+        put(part);
+    }
+}
+// </FS:minerjr>
 
 LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
 {
@@ -675,8 +723,12 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
 
     if(!return_group) //failed to insert the particle
     {
-        delete part ;
-        part = NULL ;
+        // <FS:minerjr>
+        //delete part ;
+        //part = NULL ;
+        // Release the particle to the be re-used
+        LLViewerPartSim::getInstance()->releaseParticle(part);
+        // </FS:minerjr>
     }
 
     return return_group ;
@@ -830,7 +882,10 @@ void LLViewerPartSim::updateSimulation()
             }
             mViewerPartGroups[i]->updateParticles(dt * visirate);
             mViewerPartGroups[i]->mSkippedTime=0.0f;
-            if (!mViewerPartGroups[i]->getCount())
+            // <FS:minerjr>
+            //if (!mViewerPartGroups[i]->getCount())
+            if (!mViewerPartGroups[i]->getCount() && mViewerPartGroups[i]->mLastParticleAliveTime >= LL_DELAY_AFTER_NO_PARTICLES)
+            // </FS:minerjr>
             {
                 delete mViewerPartGroups[i];
                 mViewerPartGroups.erase(mViewerPartGroups.begin() + i);
@@ -955,3 +1010,73 @@ void LLViewerPartSim::clearParticlesByOwnerID(const LLUUID& task_id)
     }
 }
 
+// <FS:minerjr>
+// Tries to return the pointe to the next free particle
+LLViewerPart* LLViewerPartSim::getFreeParticle()
+{
+    LLViewerPart* returnParticle = NULL;
+    // First check to see if the particle count is less then the max
+    if (sParticleCount < sMaxParticleCount)
+    {
+        // If it is, get the pointer to the next free particle
+        returnParticle = mParticlesPool[sParticleCount];
+        // Increase the particle count by 1
+        sParticleCount++;
+    }
+
+    return returnParticle;
+}
+
+bool LLViewerPartSim::releaseParticle(LLViewerPart* part)
+{
+    // If the particle is valid
+    if (part != NULL)
+    {
+        // We want to swap the current particle with the last valid particle
+        if (sParticleCount > 0)
+        {
+            // Store the old and last IDs
+            U32 oldID  = part->mPartID;
+            U32 lastID = sParticleCount - 1;
+            // Get the pointer to the last particle
+            LLViewerPart* lastParticle = mParticlesPool[lastID];
+            // Swap the two points, as we only store points in the vector
+            mParticlesPool[oldID]      = lastParticle;
+            mParticlesPool[lastID]     = part;
+
+            // Swap the IDs as well
+            mParticlesPool[oldID]->mPartID = oldID;
+            mParticlesPool[lastID]->mPartID = lastID;
+
+            // Set the last ID to dead, just in case
+            mParticlesPool[lastID]->mFlags = LLViewerPart::LL_PART_DEAD_MASK;
+
+            // Decrease the particle count by 1
+            sParticleCount--;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    return false;    
+}
+
+bool LLViewerPartSim::releaseParticles(LLViewerPartGroup::part_list_t removeList)
+{
+    // Get an iterator for the removal list
+    LLViewerPartGroup::part_list_t::iterator iter = removeList.begin();
+    // Loop over all the lists
+    while (iter != removeList.end())
+    {
+        // Relase the current iterator
+        releaseParticle(*iter);
+        // Go on to the next particle
+        iter++;
+    }
+
+    return true;
+}
+
+// </FS:minerjr>

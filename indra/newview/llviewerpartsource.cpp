@@ -301,7 +301,16 @@ void LLViewerPartSourceScript::update(const F32 dt)
                 continue;
             }
 
-            LLViewerPart* part = new LLViewerPart();
+            // <FS:minerjr>
+            //LLViewerPart* part = new LLViewerPart();
+            // Try to get a free particle
+            LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+            // If there are no free particles, we can contine
+            if (part == NULL)
+            {
+                continue;
+            }
+            // </FS:minerjr>
 
             part->init(this, mImagep, NULL);
             part->mFlags = mPartSysData.mPartData.mFlags;
@@ -643,7 +652,16 @@ void LLViewerPartSourceSpiral::update(const F32 dt)
         {
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        // LLViewerPart* part = new LLViewerPart();
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            return;
+        }
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;
         part->mEndColor = mColor;
@@ -792,7 +810,16 @@ void LLViewerPartSourceBeam::update(const F32 dt)
             mImagep = LLViewerFetchedTexture::sDefaultParticleImagep;
         }
 
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        // LLViewerPart* part = new LLViewerPart();
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            return;
+        }
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
 
         part->mFlags = LLPartData::LL_PART_INTERP_COLOR_MASK |
@@ -910,7 +937,16 @@ void LLViewerPartSourceChat::update(const F32 dt)
         {
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        // LLViewerPart* part = new LLViewerPart();
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            return;
+        }
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;
         part->mEndColor = mColor;
