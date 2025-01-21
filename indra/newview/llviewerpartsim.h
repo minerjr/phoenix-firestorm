@@ -58,6 +58,7 @@ public:
     LLViewerPart();
 
     void init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *imagep, LLVPCallback cb);
+
     // <FS:minerjr>
     void release();
     // </FS:minerjr>
