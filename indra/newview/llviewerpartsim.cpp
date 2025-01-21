@@ -75,8 +75,7 @@ F32 calc_desired_size(LLViewerCamera* camera, LLVector3 pos, LLVector2 scale)
     return llclamp(desired_size, scale.magVec()*0.5f, PART_SIM_BOX_SIDE*2);
 }
 
-LLViewerPart::LLViewerPart() :
-    mPartID(LLViewerPart::sNextPartID),
+LLViewerPart::LLViewerPart() :    
     mLastUpdateTime(0.f),
     mSkipOffset(0.f),
     mVPCallback(NULL),
@@ -88,6 +87,7 @@ LLViewerPart::LLViewerPart() :
     mParent = NULL;
     mChild = NULL;
     // <FS:minerjr>
+    mPartID = LLViewerPart::sNextPartID;
     LLViewerPart::sNextPartID++;
     // </FS:minerjr>
     ++LLViewerPartSim::sParticleCount2 ;
@@ -135,6 +135,67 @@ void LLViewerPart::init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *
     mImagep = imagep;
 }
 
+// <FS:minerjr>
+void LLViewerPart::release()
+{
+    if (mPartSourcep.notNull() && mPartSourcep->mLastPart == this)
+    {
+        mPartSourcep->mLastPart = NULL;
+    }
+
+    // patch up holes in the ribbon
+    if (mParent)
+    {
+        llassert(mParent->mChild == this);
+        mParent->mChild = mChild;
+    }
+
+    if (mChild)
+    {
+        llassert(mChild->mParent == this);
+        mChild->mParent = mParent;
+    }
+
+    mPartSourcep = NULL;
+
+    mFlags = 0;      // Particle state/interpolators in effect
+    mMaxAge = 0.0f;     // Maximum age of the particle
+    mStartColor.setToBlack(); // Start color
+    mEndColor.setToBlack();   // End color
+    mStartScale.clear(); // Start scale
+    mEndScale.clear();   // End scale
+
+    mPosOffset.clear(); // Offset from source if using FOLLOW_SOURCE
+    mParameter = 0.0f; // A single floating point parameter
+
+    mStartGlow = 0.0f;
+    mEndGlow = 0.0f;
+
+    mBlendFuncSource = 0;
+    mBlendFuncDest = 0;
+
+    mLastUpdateTime = 0.0f; // Last time the particle was updated
+    mSkipOffset = 0.0f ;// Offset against current group mSkippedTime
+
+    mVPCallback = NULL;  // Callback function for more complicated behaviors    
+
+    mParent = NULL; // particle to connect to if this is part of a particle ribbon
+    mChild = NULL; // child particle for clean reference destruction
+
+    // Current particle state (possibly used for rendering)
+    mImagep = NULL;
+    mPosAgent.clear();
+    mVelocity.clear();
+    mAccel.clear();
+    mAxis.clear();
+    mColor.setToBlack();
+    mScale.clear();
+    mStartGlow = 0.0f;
+    mEndGlow = 0.0f;
+    mGlow.setToBlack();
+    --LLViewerPartSim::sParticleCount2;
+}
+// </FS:minerjr>
 
 /////////////////////////////
 //
@@ -148,6 +209,10 @@ LLViewerPartGroup::LLViewerPartGroup(const LLVector3 &center_agent, const F32 bo
 {
     mVOPartGroupp = NULL;
     mUniformParticles = true;
+    // <FS:minerjr>
+    // Reserve a vector the size of the entire max count, to try to 
+    mParticles.reserve(LLViewerPartSim::MAX_PART_COUNT);
+    // </FS:minerjr>
 
     mRegionp = LLWorld::getInstance()->getRegionFromPosAgent(center_agent);
     llassert_always(center_agent.isFinite());
@@ -217,8 +282,9 @@ LLViewerPartGroup::~LLViewerPartGroup()
     LLViewerPartSim::getInstance()->releaseParticles(mParticles);
     // </FS:minerjr>
     mParticles.clear();
-
-    LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // <FS:minerjr>
+    //LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // </FS:minerjr>
 }
 
 void LLViewerPartGroup::cleanup()
@@ -281,7 +347,9 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
 
     mParticles.push_back(part);
     part->mSkipOffset=mSkippedTime;
-    ++LLViewerPartSim::sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // <FS:minerjr>
+    //++LLViewerPartSim::sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // </FS:minerjr>
     return true;
 }
 
@@ -420,8 +488,8 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
             // mParticles.pop_back() ;
             // delete part ;
             vector_replace_with_last(mParticles, mParticles.begin() + i);
-            --LLViewerPartSim::sParticleCount; 
             // <FS:minerjr>
+            //--LLViewerPartSim::sParticleCount;             
             //delete part ;
             // Relase the particle
             LLViewerPartSim::getInstance()->releaseParticle(part);
@@ -444,7 +512,9 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
                 // Note: put() uses addpart when succesful, this increase sParticleCount by 1
                 // even though it has stayed the same. If it is not succesful then we need to decrease by 1
                 // so a decrement here works for both cases.
-                --LLViewerPartSim::sParticleCount; 
+                // <FS:minerjr>
+                //--LLViewerPartSim::sParticleCount;
+                // </FS:minerjr>
                 changed = true;
                 // </FS:Beq>
             }
@@ -542,6 +612,7 @@ void LLViewerPartSim::checkParticleCount(U32 size)
     // {
     //     LL_ERRS() << "current particle size: " << LLViewerPartSim::sParticleCount2 << " array size: " << size << LL_ENDL ; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
     // }
+    return;
     if(LLViewerPartSim::sParticleCount2 != LLViewerPartSim::sParticleCount)
     {
         static int fail_count{0};
@@ -578,7 +649,12 @@ LLViewerPartSim::LLViewerPartSim()
     static U32 id_seed = 0;
     mID = ++id_seed;
     // <FS:minerjr>
-    mParticlesPool.resize(LL_MAX_PARTICLE_COUNT);
+    mParticlesPool.reserve(LLViewerPartSim::MAX_PART_COUNT);
+    for (int x = 0; x < LLViewerPartSim::MAX_PART_COUNT; x++)
+    {
+        mParticlesPool.push_back(new LLViewerPart());
+    }
+    
     sParticleCount = 0;
     // </FS:minerjr>
 }
@@ -613,6 +689,15 @@ void LLViewerPartSim::destroyClass()
 
     // Kill all of the sources
     mViewerPartSources.clear();
+    // <FS:minerjr>
+    // Erase the pool of particles
+    count = (S32)mParticlesPool.size();
+    for (i = 0; i < count; i++)
+    {
+        delete mParticlesPool[i];
+    }
+    mParticlesPool.clear();
+    // </FS:minerjr>
 }
 
 //static
@@ -1050,6 +1135,10 @@ bool LLViewerPartSim::releaseParticle(LLViewerPart* part)
 
             // Set the last ID to dead, just in case
             mParticlesPool[lastID]->mFlags = LLViewerPart::LL_PART_DEAD_MASK;
+
+            // Call the release on the particle (same as the old deconstructor)
+            // to update the parent and child pointers
+            mParticlesPool[lastID]->release();
 
             // Decrease the particle count by 1
             sParticleCount--;

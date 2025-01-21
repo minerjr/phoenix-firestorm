@@ -58,7 +58,9 @@ public:
     LLViewerPart();
 
     void init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *imagep, LLVPCallback cb);
-
+    // <FS:minerjr>
+    void release();
+    // </FS:minerjr>
 
     U32                 mPartID;                    // Particle ID used primarily for moving between groups
     F32                 mLastUpdateTime;            // Last time the particle was updated
