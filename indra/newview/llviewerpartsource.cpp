@@ -305,10 +305,10 @@ void LLViewerPartSourceScript::update(const F32 dt)
             //LLViewerPart* part = new LLViewerPart();
             // Try to get a free particle
             LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
-            // If there are no free particles, we can contine
+            // If there are no free particles, we can break
             if (part == NULL)
             {
-                continue;
+                break;
             }
             // </FS:minerjr>
 
@@ -653,7 +653,7 @@ void LLViewerPartSourceSpiral::update(const F32 dt)
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
         // <FS:minerjr>
-        // LLViewerPart* part = new LLViewerPart();
+        //LLViewerPart* part = new LLViewerPart();
         // Try to get a free particle
         LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
         // If there are no free particles, we can exit
@@ -811,7 +811,7 @@ void LLViewerPartSourceBeam::update(const F32 dt)
         }
 
         // <FS:minerjr>
-        // LLViewerPart* part = new LLViewerPart();
+        //LLViewerPart* part = new LLViewerPart();
         // Try to get a free particle
         LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
         // If there are no free particles, we can exit
@@ -938,7 +938,7 @@ void LLViewerPartSourceChat::update(const F32 dt)
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
         // <FS:minerjr>
-        // LLViewerPart* part = new LLViewerPart();
+        //LLViewerPart* part = new LLViewerPart();
         // Try to get a free particle
         LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
         // If there are no free particles, we can exit

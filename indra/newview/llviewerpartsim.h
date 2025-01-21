@@ -161,18 +161,7 @@ public:
     void cleanupRegion(LLViewerRegion *regionp);
 
     static bool shouldAddPart(); // Just decides whether this particle should be added or not (for particle count capping)
-    F32 maxRate() // Return maximum particle generation rate
-    {
-        if (sParticleCount >= MAX_PART_COUNT)
-        {
-            return 1.f;
-        }
-        if (sParticleCount > PART_THROTTLE_THRESHOLD*sMaxParticleCount)
-        {
-            return (((F32)sParticleCount/(F32)sMaxParticleCount)-PART_THROTTLE_THRESHOLD)*PART_THROTTLE_RESCALE;
-        }
-        return 0.f;
-    }
+    F32 maxRate(); // Return maximum particle generation rate    
     F32 getRefRate() { return sParticleAdaptiveRate; }
     F32 getBurstRate() {return sParticleBurstRate; }
     void addPart(LLViewerPart* part);
@@ -191,7 +180,8 @@ public:
 
     friend class LLViewerPartGroup;
 
-    bool aboveParticleLimit() const { return sParticleCount > sMaxParticleCount; }
+    bool aboveParticleLimit() const;
+
     static void setMaxPartCount(const S32 max_parts)    { sMaxParticleCount = max_parts; }
     static S32  getMaxPartCount()                       { return sMaxParticleCount; }
 
