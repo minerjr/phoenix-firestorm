@@ -642,18 +642,14 @@ void LLViewerPartSourceSpiral::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
-
-        if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
-        {
-            mPosAgent = mSourceObjectp->getRenderPosition();
-        }
-        // <FS:minerjr>
-        //LLViewerPart* part = new LLViewerPart();
+        */
         // Try to get a free particle
         LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
         // If there are no free particles, we can exit
@@ -661,6 +657,14 @@ void LLViewerPartSourceSpiral::update(const F32 dt)
         {
             return;
         }
+        // </FS:minerjr>
+
+        if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
+        {
+            mPosAgent = mSourceObjectp->getRenderPosition();
+        }
+        // <FS:minerjr>
+        //LLViewerPart* part = new LLViewerPart();
         // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;
@@ -799,11 +803,22 @@ void LLViewerPartSourceBeam::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
+        */        
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            return;
+        }
+        // </FS:minerjr>
 
         if (!mImagep)
         {
@@ -812,13 +827,6 @@ void LLViewerPartSourceBeam::update(const F32 dt)
 
         // <FS:minerjr>
         //LLViewerPart* part = new LLViewerPart();
-        // Try to get a free particle
-        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
-        // If there are no free particles, we can exit
-        if (part == NULL)
-        {
-            return;
-        }
         // </FS:minerjr>
         part->init(this, mImagep, updatePart);
 
@@ -927,18 +935,14 @@ void LLViewerPartSourceChat::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
-
-        if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
-        {
-            mPosAgent = mSourceObjectp->getRenderPosition();
-        }
-        // <FS:minerjr>
-        //LLViewerPart* part = new LLViewerPart();
+        */
         // Try to get a free particle
         LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
         // If there are no free particles, we can exit
@@ -946,6 +950,14 @@ void LLViewerPartSourceChat::update(const F32 dt)
         {
             return;
         }
+        // </FS:minerjr>
+
+        if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
+        {
+            mPosAgent = mSourceObjectp->getRenderPosition();
+        }
+        // <FS:minerjr>
+        //LLViewerPart* part = new LLViewerPart();       
         // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;

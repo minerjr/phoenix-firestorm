@@ -359,9 +359,9 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     F32 dt;
 
     LLVector3 gravity(0.f, 0.f, GRAVITY);
-
-    LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
-
+    // <FS:minerjr>
+    //LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
+    // </FS:minerjr>
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     LLViewerRegion *regionp = getRegion();
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch    
@@ -566,8 +566,10 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
             mVOPartGroupp = NULL;
         }
     }
-
-    LLViewerPartSim::checkParticleCount() ;
+    // <FS:minerjr>
+    //LLViewerPartSim::checkParticleCount() ;
+    // </FS:minerjr>
+    
 }
 
 
@@ -868,7 +870,7 @@ void LLViewerPartSim::updateSimulation()
 {
     static LLFrameTimer update_timer;
 
-    const F32 dt = llmin(update_timer.getElapsedTimeAndResetF32(), 0.1f);
+    const F32 dt = llmin(update_timer.getElapsedTimeAndResetF32(), 0.2f);
 
     // <FS:LO> Dont suspend partical processing while particles are hidden, just skip over drawing them
     /*if (!(gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES)))
@@ -1018,7 +1020,7 @@ void LLViewerPartSim::updateSimulation()
 
     updatePartBurstRate() ;
 
-    //LL_INFOS() << "Particles: " << sParticleCount << " Adaptive Rate: " << sParticleAdaptiveRate << LL_ENDL;
+    LL_INFOS() << "Particles: " << sParticleCount << " Adaptive Rate: " << sParticleAdaptiveRate << LL_ENDL;
 }
 
 void LLViewerPartSim::updatePartBurstRate()

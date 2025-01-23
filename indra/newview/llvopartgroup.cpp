@@ -274,7 +274,9 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
     F32 pixel_meter_ratio = LLViewerCamera::getInstance()->getPixelMeterRatio();
     pixel_meter_ratio *= pixel_meter_ratio;
 
-    LLViewerPartSim::checkParticleCount(static_cast<U32>(mViewerPartGroupp->mParticles.size()));
+    // <FS:minerjr>
+    // LLViewerPartSim::checkParticleCount(static_cast<U32>(mViewerPartGroupp->mParticles.size()));
+    // </FS:minerjr>    
 
     S32 count=0;
     mDepth = 0.f;
