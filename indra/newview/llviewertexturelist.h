@@ -65,6 +65,61 @@ enum ETexListType
     TEX_LIST_SCALE
 };
 
+// <FS:minerjr>
+// Moved this here as we can re-use this structure for our new 
+typedef std::vector<std::pair<FSTextureRequest, LLPointer<LLViewerFetchedTexture>>> entries_list_t;
+// New class to track all of the fun changes to the textures in the current frame, and to control which ones go through
+class FSTextureRequestLists
+{
+public:
+    FSTextureRequestLists();
+    // Returns true if the request was accepted, false if rejected. Though the request could be rejected later on if higher priority texture appears
+    //bool addRequest(FSTextureRequest newRequest, S32 textureIndex);
+    // Clear the current texture requests, could make it so we hold on to the list and keep updating the
+    // change requests
+    bool clearRequests();
+
+    // This will sort the list of texture changes
+    bool processRequests();
+
+    // Helper function to init a FSTextureRequest with the data form an image
+    static FSTextureRequest initRequestFromTexture(LLViewerFetchedTexture* imagep);
+
+    // Static declair of values
+    const static S32 MAX_TEXTURE_REQUEST_SIZE = 512;
+    const static S32 NUMBER_OF_TEXTURE_REQUEST_LISTS = 2;
+
+    // Fun bit mask flag time to reverse the values of the discard as 0 is higher quality
+    const static U64 FLIP_DISCARD_TEXTURE_MASK;
+
+    // Accessor methods for the Vector of Fetch Textures
+    entries_list_t getTexturesToModify() { return mTexturesToModify; }
+    // Creates a pair of FSTextureRequest along with the texture
+    bool addTextureToModify(LLPointer<LLViewerFetchedTexture> newTexture);
+
+    bool updateStats(FSTextureRequest currentTextureRequest);
+
+private:
+    
+    // Strcut to store the 2 texture request lists
+    //FSTextureRequestList mTextureRequestLists[NUMBER_OF_TEXTURE_REQUEST_LISTS];
+    // We now store the list of textures to modify in side here instead of creating a new list
+    // every frame.
+    entries_list_t mTexturesToModify;
+
+    U64 mDecreaseRAMAmount;
+    U64 mIncreaseRAMAmount;
+    U64 mDecreaseVRAMAmount;
+    U64 mIncreaseVRAMAMount;
+
+    S32 mNumberOfDecreaseRequests;
+    S32 mNumberOfIncreaseRequests;
+
+    bool Swap(S32 index_1, S32 index_2);
+
+};
+// </FS:minerjr>
+
 struct LLTextureKey
 {
     LLTextureKey();
@@ -149,7 +204,12 @@ public:
     // - updates decode priority
     // - updates desired discard level
     // - cleans up textures that haven't been referenced in awhile
-    void updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images = true);
+    // <FS:minerjr>
+    //void updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images = true);
+    // The updated to return the state of the texture before and after the decode priority change
+    void updateImageDecodePriority(std::pair<FSTextureRequest, LLViewerFetchedTexture*> imagep , bool flush_images = true);
+    std::shared_ptr<FSTextureRequestLists> mTextureRequestList;
+    // </FS:minerjr>
 
 private:
     F32  updateImagesCreateTextures(F32 max_time);

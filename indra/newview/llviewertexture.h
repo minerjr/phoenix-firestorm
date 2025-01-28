@@ -64,6 +64,49 @@ class LLViewerMediaImpl ;
 class LLVOVolume ;
 struct LLTextureKey;
 
+// <FS:minerjr>
+// New texture request structure for tracking all the request for increase/decrease in textures
+// The idea is instead of instantly changing the state of the texture list, the requests are currated
+// and pruned or adjusted to 
+typedef union FSTextureRequests_u
+{
+    struct TextureRequest_s
+    {
+        // Order the fields in order of impoartance, can be used to compare two textures to see which one is
+        // more important for sorting, so we are just sorting U64 values and not a bunch of if/else statements
+        U64 OnScreen : 1; // On screen very important
+        U64 ScaleDown : 1; // Being asked to be scaled down also very important for memory
+        U64 NeedToDeleted : 1; // Track of the texture wants to be deleted
+        U64 NewBoostLevel : 6; // The new boost level is more important then the old boost level
+        U64 OldBoostLevel : 6;
+        U64 Type : 3; // Texture type is important (LOD < FECTCH < DYNAMIC < MEDIA)
+        U64 NewIsOnTextureList : 1; // Was the texture newly added more important then if it was previously
+        U64 OldIsOnTextureList : 1;
+        U64 DecrasePixelChange : 1;
+        U64 PixelChange : 26; // The amount of pixel change makes it more important larger the change
+        U64 NewDiscard : 3;
+        U64 OldDiscard : 3;
+        U64 NewDesiredDiscard : 3;
+        U64 OldDesiredDiscard : 3; 
+        U64 NewFullyLoaded : 1;
+        U64 OldFullyLoaded : 1;
+        U64 TextListType : 1;
+    } TextureRequest;
+    U64 Raw;
+} FSTextureRequest;
+
+// Struct to hold the request list along with the size of the list and
+// amount of memory held by the requests
+typedef struct FSTextureRequestList_s
+{
+    std::vector<FSTextureRequest> mTexturesRequests;
+    std::vector<S32> mTextureIndicies;
+    U32 mSizeOfList;
+    U64 mTotalMemory;
+}FSTextureRequestList;
+// </FS:minerjr>
+
+
 class LLLoadedCallbackEntry
 {
 public:
@@ -353,7 +396,7 @@ public:
 
     void destroyTexture() ;
 
-    virtual void processTextureStats() ;
+    virtual FSTextureRequest processTextureStats(FSTextureRequest currentTextureRequest) ;
 
     bool needsAux() const { return mNeedsAux; }
 
@@ -571,7 +614,7 @@ public:
 
     S8 getType() const override;
     // Process image stats to determine priority/quality requirements.
-    void processTextureStats() override;
+    FSTextureRequest processTextureStats(FSTextureRequest currentTextureRequest) override;
     bool isUpdateFrozen() ;
 
     bool scaleDown() override;

@@ -7756,6 +7756,26 @@ void LLViewerObject::setGLTFAsset(const LLUUID& id)
 }
 
 
+void LLViewerObject::setClickAction(U8 action)
+{
+    mClickAction = action;
+
+    switch (mClickAction) 
+    {
+        case CLICK_ACTION_SIT:
+        {
+            setIcon(LLViewerTextureManager::getFetchedTextureFromFile("icons/toolsit.png", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI));
+            break;
+        }
+        default:
+        {
+            clearIcon();
+        }
+    }
+    //setIcon();
+}
+
+
 class ObjectPhysicsProperties : public LLHTTPNode
 {
 public:

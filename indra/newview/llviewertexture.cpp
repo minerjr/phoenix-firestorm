@@ -549,8 +549,14 @@ void LLViewerTexture::updateClass()
             LL_WARNS() << "Low system memory detected, emergency downrezzing off screen textures" << LL_ENDL;
             for (auto& image : gTextureList)
             {
+                gTextureList.mTextureRequestList->addTextureToModify(image);                
+            }
+            for (auto& image : gTextureList.mTextureRequestList->getTexturesToModify())
+            {
                 gTextureList.updateImageDecodePriority(image, false /*will modify gTextureList otherwise!*/);
             }
+            gTextureList.mTextureRequestList->processRequests();
+
         }
     }
 
@@ -1730,7 +1736,10 @@ void LLViewerFetchedTexture::setDebugText(const std::string& text)
 extern bool gCubeSnapshot;
 
 //virtual
-void LLViewerFetchedTexture::processTextureStats()
+//  <FS:minerjr>
+//void LLViewerFetchedTexture::processTextureStats()
+FSTextureRequest LLViewerFetchedTexture::processTextureStats(FSTextureRequest currentTextureRequest)
+// </FS:minerjr>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(!gCubeSnapshot);  // should only be called when the main camera is active
@@ -1816,6 +1825,17 @@ void LLViewerFetchedTexture::processTextureStats()
             mFullyLoaded = false;
         }
     }
+    // <FS:minerjr>
+    //Store the requested desired discard level and Reset the current discard level
+    currentTextureRequest.TextureRequest.NewDesiredDiscard = mDesiredDiscardLevel;
+    mDesiredDiscardLevel = currentTextureRequest.TextureRequest.OldDesiredDiscard;
+    //Store the new fully loaded state and reset it back to prior to this function running
+    currentTextureRequest.TextureRequest.NewFullyLoaded = mFullyLoaded;
+    mFullyLoaded = currentTextureRequest.TextureRequest.OldFullyLoaded;
+
+    // Pass the modified request back
+    return currentTextureRequest;
+    // </FS:minerjr>
 }
 
 //============================================================================
@@ -2079,8 +2099,11 @@ bool LLViewerFetchedTexture::updateFetch()
         }
         else
         {
+            F32 currentTime = gFrameTimeSeconds;
             mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
                                                                         mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
+            F32 delta   = gFrameTimeSeconds - currentTime;
+            //LL_INFOS() << "Fetch State:" << mFetchState << " delta: " << delta << LL_ENDL;
         }
 
         if (!processFetchResults(desired_discard, current_discard, fetch_discard, decode_priority))
@@ -2097,6 +2120,8 @@ bool LLViewerFetchedTexture::updateFetch()
                 LLAppViewer::getTextureFetch()->updateRequestPriority(mID, decode_priority);
             }
         }
+
+        return false;
     }
 
     desired_discard = llmin(desired_discard, getMaxDiscardLevel());
@@ -3012,7 +3037,10 @@ bool LLViewerLODTexture::isUpdateFrozen()
 
 // This is gauranteed to get called periodically for every texture
 //virtual
-void LLViewerLODTexture::processTextureStats()
+// <FS:minerjr>
+//void LLViewerLODTexture::processTextureStats()
+FSTextureRequest LLViewerLODTexture::processTextureStats(FSTextureRequest currentTextureRequest)
+// </FS:minerjr>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     updateVirtualSize();
@@ -3020,7 +3048,10 @@ void LLViewerLODTexture::processTextureStats()
     bool did_downscale = false;
 
     static LLCachedControl<bool> textures_fullres(gSavedSettings,"TextureLoadFullRes", false);
-
+    // <FS:minerjr>
+    // Store the current max virtual size
+    float max_vsize = mMaxVirtualSize;    
+    // </FS:minerjr>
     { // restrict texture resolution to download based on RenderMaxTextureResolution
         static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
         // sanity clamp debug setting to avoid settings hack shenanigans
@@ -3108,7 +3139,10 @@ void LLViewerLODTexture::processTextureStats()
         {
             if (current_discard < mDesiredDiscardLevel && !mForceToSaveRawImage)
             { // should scale down
-                scaleDown();
+                // <FS:minerjr>
+                //scaleDown();
+                currentTextureRequest.TextureRequest.ScaleDown = 1;
+                // </FS:minerjr>
             }
         }
 
@@ -3133,6 +3167,18 @@ void LLViewerLODTexture::processTextureStats()
     {
         setBoostLevel(BOOST_NONE);
     }
+
+    // <FS:minerjr>
+    //Store the requested desired discard level and Reset the current discard level
+    currentTextureRequest.TextureRequest.NewDesiredDiscard = mDesiredDiscardLevel;
+    mDesiredDiscardLevel = currentTextureRequest.TextureRequest.OldDesiredDiscard;
+    //Store the new fully loaded state and reset it back to prior to this function running
+    //currentTextureRequest.TextureRequest.NewFullyLoaded = mFullyLoaded;
+    //mFullyLoaded = currentTextureRequest.TextureRequest.OldFullyLoaded;
+
+    // Pass the modified request back
+    return currentTextureRequest;
+    // </FS:minerjr>
 }
 
 extern LLGLSLShader gCopyProgram;

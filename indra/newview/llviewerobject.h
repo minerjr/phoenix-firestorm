@@ -618,7 +618,9 @@ public:
     // Does "open" object menu item apply?
     bool allowOpen() const;
 
-    void setClickAction(U8 action) { mClickAction = action; }
+    // <FS:minerjr>
+    void setClickAction(U8 action);
+    // </FS:minerjr>
     U8 getClickAction() const { return mClickAction; }
     bool specialHoverCursor() const;    // does it have a special hover cursor?
 
@@ -800,6 +802,9 @@ public:
 
     std::string mHudText;
     LLColor4 mHudTextColor;
+
+    
+    LLPointer<LLUIImage> mActionIcons; // Added background rect image from LLHUDNameTag
 
     static          bool        sUseSharedDrawables;
 
