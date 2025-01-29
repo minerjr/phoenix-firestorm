@@ -1738,7 +1738,7 @@ extern bool gCubeSnapshot;
 //virtual
 //  <FS:minerjr>
 //void LLViewerFetchedTexture::processTextureStats()
-FSTextureRequest LLViewerFetchedTexture::processTextureStats(FSTextureRequest currentTextureRequest)
+FSTextureRequest &LLViewerFetchedTexture::processTextureStats(FSTextureRequest &currentTextureRequest)
 // </FS:minerjr>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1832,6 +1832,30 @@ FSTextureRequest LLViewerFetchedTexture::processTextureStats(FSTextureRequest cu
     //Store the new fully loaded state and reset it back to prior to this function running
     currentTextureRequest.TextureRequest.NewFullyLoaded = mFullyLoaded;
     mFullyLoaded = currentTextureRequest.TextureRequest.OldFullyLoaded;
+
+    // Check to see if the new discard level is lower then the old one, if so we need
+    // to recalculate the amount of change to the max virtual size
+    // Take the old value and subract the new value, and if it is greater then 0 (0 no change, minus went down)
+    S32 discard_change = (S32)currentTextureRequest.TextureRequest.OldDiscard - (S32)currentTextureRequest.TextureRequest.NewDesiredDiscard;
+    // Handle the increase in texture size
+    if (discard_change > 0)
+    {
+        currentTextureRequest.TextureRequest.PixelChange = (getWidth(currentTextureRequest.TextureRequest.OldDiscard) - getWidth(currentTextureRequest.TextureRequest.NewDesiredDiscard)) * (getHeight(currentTextureRequest.TextureRequest.OldDiscard) - getHeight(currentTextureRequest.TextureRequest.NewDesiredDiscard));
+
+        if (currentTextureRequest.TextureRequest.PixelChange == 0)
+        {
+            currentTextureRequest.TextureRequest.PixelChange = (U64)mMaxVirtualSize;
+        }
+    }
+    else if (discard_change < 0)
+    {
+        currentTextureRequest.TextureRequest.DecreasePixelChange = 0;
+        currentTextureRequest.TextureRequest.PixelChange = (getWidth(currentTextureRequest.TextureRequest.NewDesiredDiscard) - getWidth(currentTextureRequest.TextureRequest.OldDiscard)) * (getHeight(currentTextureRequest.TextureRequest.NewDesiredDiscard) - getHeight(currentTextureRequest.TextureRequest.OldDiscard));
+        if (currentTextureRequest.TextureRequest.PixelChange == 0)
+        {
+            currentTextureRequest.TextureRequest.PixelChange = (U64)mMaxVirtualSize;
+        }
+    }
 
     // Pass the modified request back
     return currentTextureRequest;
@@ -2998,6 +3022,49 @@ F32 LLViewerFetchedTexture::getElapsedLastReferencedSavedRawImageTime() const
     return sCurrentTime - mLastReferencedSavedRawImageTime;
 }
 
+// <FS:minerjr>
+// Accesor method that lets it apply the change to the texture
+bool LLViewerFetchedTexture::applyTextureRequest(FSTextureRequest &textureRequest)
+{
+
+    if (textureRequest.Raw == 0) return false;
+
+    if (textureRequest.TextureRequest.NeedToDelete == 1)
+    {
+        // Delete is private (For now, but could make it so that we choose the delete)
+        // as well, we could impliment a texture pool where deleted
+        // textures go to so that they don't have to new/delete every time
+        // they get 
+        //gTextureList.deleteImage(mTexturesToModify[index].second);
+
+    }
+
+    if (textureRequest.TextureRequest.PixelChange != 0)
+    {
+        F32 newMaxVirtualSize = getMaxVirtualSize() + textureRequest.TextureRequest.PixelChange;
+        resetTextureStats();
+        addTextureStats(newMaxVirtualSize);
+    }
+
+    mDesiredDiscardLevel = textureRequest.TextureRequest.NewDesiredDiscard;
+    mFullyLoaded = textureRequest.TextureRequest.NewFullyLoaded;
+
+    if (textureRequest.TextureRequest.NewBoostLevel != textureRequest.TextureRequest.OldBoostLevel)
+    {
+        setBoostLevel(textureRequest.TextureRequest.NewBoostLevel);
+    }
+
+    if (textureRequest.TextureRequest.ScaleDown)
+    {
+        scaleDown();
+    }
+
+        
+
+    return true;
+}
+// </FS:minerjr>
+
 //----------------------------------------------------------------------------------------------
 //end of LLViewerFetchedTexture
 //----------------------------------------------------------------------------------------------
@@ -3039,7 +3106,7 @@ bool LLViewerLODTexture::isUpdateFrozen()
 //virtual
 // <FS:minerjr>
 //void LLViewerLODTexture::processTextureStats()
-FSTextureRequest LLViewerLODTexture::processTextureStats(FSTextureRequest currentTextureRequest)
+FSTextureRequest &LLViewerLODTexture::processTextureStats(FSTextureRequest &currentTextureRequest)
 // </FS:minerjr>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -3050,7 +3117,9 @@ FSTextureRequest LLViewerLODTexture::processTextureStats(FSTextureRequest curren
     static LLCachedControl<bool> textures_fullres(gSavedSettings,"TextureLoadFullRes", false);
     // <FS:minerjr>
     // Store the current max virtual size
-    float max_vsize = mMaxVirtualSize;    
+    float max_vsize = mMaxVirtualSize;
+    // Tmp apply the max virtual size to trigger the code below
+    mMaxVirtualSize = mMaxVirtualSize + (F32)(currentTextureRequest.TextureRequest.DecreasePixelChange ? -(F32)currentTextureRequest.TextureRequest.PixelChange : (F32)currentTextureRequest.TextureRequest.PixelChange);
     // </FS:minerjr>
     { // restrict texture resolution to download based on RenderMaxTextureResolution
         static LLCachedControl<U32> max_texture_resolution(gSavedSettings, "RenderMaxTextureResolution", 2048);
@@ -3175,6 +3244,32 @@ FSTextureRequest LLViewerLODTexture::processTextureStats(FSTextureRequest curren
     //Store the new fully loaded state and reset it back to prior to this function running
     //currentTextureRequest.TextureRequest.NewFullyLoaded = mFullyLoaded;
     //mFullyLoaded = currentTextureRequest.TextureRequest.OldFullyLoaded;
+    // Reset the max virtual size to the previous value
+    mMaxVirtualSize = max_vsize;
+
+    // Check to see if the new discard level is lower then the old one, if so we need
+    // to recalculate the amount of change to the max virtual size
+    // Take the old value and subract the new value, and if it is greater then 0 (0 no change, minus went down)
+    S32 discard_change = (S32)currentTextureRequest.TextureRequest.OldDiscard - (S32)currentTextureRequest.TextureRequest.NewDesiredDiscard;
+    // Handle the increase in texture size
+    if (discard_change > 0)
+    {
+        currentTextureRequest.TextureRequest.PixelChange = (getWidth(currentTextureRequest.TextureRequest.OldDiscard) - getWidth(currentTextureRequest.TextureRequest.NewDesiredDiscard)) * (getHeight(currentTextureRequest.TextureRequest.OldDiscard) - getHeight(currentTextureRequest.TextureRequest.NewDesiredDiscard));
+
+        if (currentTextureRequest.TextureRequest.PixelChange == 0)
+        {
+            currentTextureRequest.TextureRequest.PixelChange = (U64)mMaxVirtualSize;
+        }
+    }
+    else if (discard_change < 0)
+    {
+        currentTextureRequest.TextureRequest.DecreasePixelChange = 0;
+        currentTextureRequest.TextureRequest.PixelChange = (getWidth(currentTextureRequest.TextureRequest.NewDesiredDiscard) - getWidth(currentTextureRequest.TextureRequest.OldDiscard)) * (getHeight(currentTextureRequest.TextureRequest.NewDesiredDiscard) - getHeight(currentTextureRequest.TextureRequest.OldDiscard));
+        if (currentTextureRequest.TextureRequest.PixelChange == 0)
+        {
+            currentTextureRequest.TextureRequest.PixelChange = (U64)mMaxVirtualSize;
+        }
+    }
 
     // Pass the modified request back
     return currentTextureRequest;

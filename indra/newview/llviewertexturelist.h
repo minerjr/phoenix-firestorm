@@ -68,34 +68,95 @@ enum ETexListType
 // <FS:minerjr>
 // Moved this here as we can re-use this structure for our new 
 typedef std::vector<std::pair<FSTextureRequest, LLPointer<LLViewerFetchedTexture>>> entries_list_t;
+typedef std::pair<FSTextureRequest, LLPointer<LLViewerFetchedTexture>> FSTextureRequestPair;
 // New class to track all of the fun changes to the textures in the current frame, and to control which ones go through
-class FSTextureRequestLists
+class FSTextureRequestList
 {
 public:
-    FSTextureRequestLists();
+    FSTextureRequestList();
     // Returns true if the request was accepted, false if rejected. Though the request could be rejected later on if higher priority texture appears
     //bool addRequest(FSTextureRequest newRequest, S32 textureIndex);
+
     // Clear the current texture requests, could make it so we hold on to the list and keep updating the
     // change requests
     bool clearRequests();
 
     // This will sort the list of texture changes
-    bool processRequests();
+    bool processRequests(bool ignore_limits = false);
+
+    bool applyRequest(S32 index);
 
     // Helper function to init a FSTextureRequest with the data form an image
     static FSTextureRequest initRequestFromTexture(LLViewerFetchedTexture* imagep);
 
     // Static declair of values
     const static S32 MAX_TEXTURE_REQUEST_SIZE = 512;
-    const static S32 NUMBER_OF_TEXTURE_REQUEST_LISTS = 2;
+    //const static S32 NUMBER_OF_TEXTURE_REQUEST_LISTS = 2;
 
     // Fun bit mask flag time to reverse the values of the discard as 0 is higher quality
-    const static U64 FLIP_DISCARD_TEXTURE_MASK;
+    const static U64 LOW_VRAM_DROP_INCREASES = 16140901047315988480;
+    const static U64 LOW_VRAM_ALLOW_INCREASES = 18446744056529682432;
+    const static U64 FLIP_DISCARD_TEXTURE_MASK = 2733761;
+
+    // std::sort function for sorting the pair's of texture request and actual textures
+
+
+    // This is for the scenario of low memory where we want to drop all texture increases
+    static bool sort_low_memory_drop_increases(const FSTextureRequestPair& a, const FSTextureRequestPair& b)
+    {
+        // Simple look the raw value and rank based upon the current set hierarchy of values
+        // with a mask which restricts that only decrease textures will have the higher sort value
+        //static FSTextureRequest Mask;
+        //Mask.Raw = 0;
+        //Mask.TextureRequest.DecreasePixelChange = 1;
+        //Mask.TextureRequest.NeedToDelete = 1;
+        //Mask.TextureRequest.ScaleDown = 1;
+        //Mask.TextureRequest.PixelChange = 67108863;
+
+        return (a.first.Raw & LOW_VRAM_DROP_INCREASES) > (b.first.Raw & LOW_VRAM_DROP_INCREASES);
+    }
+
+    // This is for the scenario of low memory where we want to prioritize texture
+    // decreases, but allow some increases
+    static bool sort_low_memory_allow_increases(const FSTextureRequestPair& a, const FSTextureRequestPair& b)
+    {
+        // Simple look the raw value and rank based upon the current set hierarchy of values
+        //static FSTextureRequest Mask;
+        //Mask.Raw = 0;
+        //Mask.TextureRequest.OnScreen = 1;
+        //Mask.TextureRequest.DecreasePixelChange = 1;
+        //Mask.TextureRequest.NeedToDelete = 1;
+        //Mask.TextureRequest.ScaleDown = 1;
+        //Mask.TextureRequest.PixelChange = 67108863;
+
+        return (a.first.Raw & LOW_VRAM_ALLOW_INCREASES) > (b.first.Raw & LOW_VRAM_ALLOW_INCREASES);
+    }
+    
+    // This is for the normal memory scenario
+    static bool sort_normal_memory(const FSTextureRequestPair& a, const FSTextureRequestPair& b)
+    {
+        // Simple look the raw value and rank based upon the current set hierarchy of values
+        // We have a make to simply invert the discard values go from (0 don't discard) to
+        // (6 - MAX_DISCARD + 1 dicard everything)
+        //static FSTextureRequest Mask;
+        //Mask.Raw = 0;
+        //Mask.TextureRequest.Type = LLViewerTexture::INVALID_TEXTURE_TYPE;
+        //Mask.TextureRequest.NewDiscard = MAX_DISCARD_LEVEL + 1;    
+        //Mask.TextureRequest.OldDiscard = MAX_DISCARD_LEVEL + 1;
+        //Mask.TextureRequest.NewDesiredDiscard = MAX_DISCARD_LEVEL + 1;
+        //Mask.TextureRequest.OldDesiredDiscard = MAX_DISCARD_LEVEL + 1;
+        //Mask.TextureRequest.TextListType = 1;
+
+        return (a.first.Raw) > (b.first.Raw);
+        //return (~a.first.Raw & FLIP_DISCARD_TEXTURE_MASK) < (~b.first.Raw & FLIP_DISCARD_TEXTURE_MASK);
+    }
 
     // Accessor methods for the Vector of Fetch Textures
-    entries_list_t getTexturesToModify() { return mTexturesToModify; }
+    entries_list_t &getTexturesToModify() { return mTexturesToModify; }
     // Creates a pair of FSTextureRequest along with the texture
     bool addTextureToModify(LLPointer<LLViewerFetchedTexture> newTexture);
+
+    FSTextureRequestPair &getLastPair() { return mTexturesToModify.back(); }
 
     bool updateStats(FSTextureRequest currentTextureRequest);
 
@@ -114,8 +175,6 @@ private:
 
     S32 mNumberOfDecreaseRequests;
     S32 mNumberOfIncreaseRequests;
-
-    bool Swap(S32 index_1, S32 index_2);
 
 };
 // </FS:minerjr>
@@ -207,8 +266,8 @@ public:
     // <FS:minerjr>
     //void updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images = true);
     // The updated to return the state of the texture before and after the decode priority change
-    void updateImageDecodePriority(std::pair<FSTextureRequest, LLViewerFetchedTexture*> imagep , bool flush_images = true);
-    std::shared_ptr<FSTextureRequestLists> mTextureRequestList;
+    void updateImageDecodePriority(FSTextureRequestPair &imagep , bool flush_images = true);
+    std::shared_ptr<FSTextureRequestList> mTextureRequestList;
     // </FS:minerjr>
 
 private:

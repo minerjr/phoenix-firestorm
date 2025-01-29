@@ -61,6 +61,7 @@
 #include "llviewerdisplay.h"
 #include "llviewerwindow.h"
 #include "llprogressview.h"
+#include "linden_common.h"
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -89,7 +90,8 @@ textureType(TEX_LIST_STANDARD)
 }
 
 LLTextureKey::LLTextureKey(LLUUID id, ETexListType tex_type)
-: textureId(id), textureType(tex_type)
+//: textureId(id), textureType(tex_type)
+: textureId(id), textureType(TEX_LIST_STANDARD)
 {
 }
 
@@ -97,7 +99,7 @@ LLTextureKey::LLTextureKey(LLUUID id, ETexListType tex_type)
 
 LLViewerTextureList::LLViewerTextureList()
     : mForceResetTextureStats(false),
-    mInitialized(false)
+    mInitialized(false), mTextureRequestList(new FSTextureRequestList())
 {
 }
 
@@ -898,7 +900,7 @@ void LLViewerTextureList::clearFetchingRequests()
 
 extern bool gCubeSnapshot;
 
-void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, LLViewerFetchedTexture*> imagep , bool flush_images)
+void LLViewerTextureList::updateImageDecodePriority(FSTextureRequestPair &imagep , bool flush_images)
 {
     llassert(!gCubeSnapshot);
 
@@ -907,7 +909,6 @@ void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, 
     LL_INFOS() << "S Tex Type: " << (S32)imagep->getType() << " Boost Level: " << imagep->getBoostLevel() << " ID " << imagep->getID()
                << " DDL " << imagep->getDesiredDiscardLevel() << " MVS " << imagep->getMaxVirtualSize()
                << LL_ENDL;*/
-    bool skip = true;
     // </FS:minerjr>
     if (imagep.second->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)  // don't bother checking face list for boosted textures
     {
@@ -1024,7 +1025,9 @@ void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, 
             //imagep->setBoostLevel(LLViewerFetchedTexture::BOOST_HIGH);
             imagep.first.TextureRequest.NewBoostLevel = LLViewerFetchedTexture::BOOST_HIGH;
         }
-
+        // Caluclate the max vsize change (Due to addTextureStats, it can only increase in size, unless you
+        // modify the vMaxSize to 0, or call reset on it.
+        max_vsize_change = imagep.second->mMaxVirtualSize < max_vsize ? max_vsize - imagep.second->mMaxVirtualSize : 0.0f;
         if (imagep.second->getType() == LLViewerTexture::LOD_TEXTURE && imagep.second->getBoostLevel() == LLViewerTexture::BOOST_NONE)
         { // conditionally reset max virtual size for unboosted LOD_TEXTURES
           // this is an alternative to decaying mMaxVirtualSize over time
@@ -1034,17 +1037,13 @@ void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, 
                 (!on_screen && LLViewerTexture::sDesiredDiscardBias > 1.f))
             {
                 //imagep->mMaxVirtualSize = 0.f;
+                imagep.first.TextureRequest.DecreasePixelChange = 1;
                 max_vsize_change = imagep.second->mMaxVirtualSize - max_vsize;
             }
-            else
-            {
-                max_vsize_change = imagep.second->mMaxVirtualSize < max_vsize ? max_vsize - imagep.second->mMaxVirtualSize : 0.0f;
-            }
         }
-        else
-        {
-            max_vsize_change = imagep.second->mMaxVirtualSize < max_vsize ? max_vsize - imagep.second->mMaxVirtualSize : 0.0f;
-        }
+
+        // Store the change to the Max Virtual Size
+        imagep.first.TextureRequest.PixelChange = (U64)fabsf(max_vsize_change);
         
         // Store the flag that this texture is on screen
         imagep.first.TextureRequest.OnScreen = on_screen;
@@ -1082,9 +1081,13 @@ void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, 
     {
         if (imagep.second->getLastReferencedTimer()->getElapsedTimeF32() > lazy_flush_timeout)
         {
-            // Remove the unused image from the image list
-            //deleteImage(imagep);
-            imagep.first.TextureRequest.NeedToDeleted = 1;
+            // Remove the unused image from the image list            
+            imagep.first.TextureRequest.NeedToDelete = 1;
+            imagep.first.TextureRequest.DecreasePixelChange = 1;
+            imagep.first.TextureRequest.PixelChange = imagep.second->getWidth(imagep.first.TextureRequest.OldDiscard) * imagep.second->getWidth(imagep.first.TextureRequest.OldDiscard);
+            
+            deleteImage(imagep.second);
+            imagep.second = NULL;
             return ;
         }
     }
@@ -1119,7 +1122,8 @@ void LLViewerTextureList::updateImageDecodePriority(std::pair<FSTextureRequest, 
     // <FS:minerjr>
     //imagep->processTextureStats();
     // Update the first value by the result of the process texture stats on the first value
-    imagep.first = imagep.second->processTextureStats(imagep.first);
+    U64 tmp = imagep.second->processTextureStats(imagep.first).Raw;
+    //imagep.first.Raw = tmp;
     // </FS:minerjr>
     /* LL_INFOS() << "E Tex Type: " << (S32)imagep->getType() << " Boost Level: " << imagep->getBoostLevel() << " Media "
                << imagep->isViewerMediaTexture() << " DDL " << imagep->getDesiredDiscardLevel() << " MVS " << imagep->getMaxVirtualSize()
@@ -1256,9 +1260,15 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
         return ;
     }
     // <FS:minerjr>
-    FSTextureRequest newRequest = FSTextureRequestLists::initRequestFromTexture(imagep);
-    newRequest = imagep->processTextureStats(newRequest);
-
+    // imagep->processTextureStats();
+    //FSTextureRequest newRequest = FSTextureRequestList::initRequestFromTexture(imagep);
+    if (mTextureRequestList->addTextureToModify(imagep))
+    {
+        FSTextureRequestPair requestPair = mTextureRequestList->getLastPair();
+        requestPair.first.Raw = imagep->processTextureStats(requestPair.first).Raw;
+        //mTextureRequestList->processRequests();
+        //mTextureRequestList->clearRequests();
+    }
     // </FS:minerjr>
     return ;
 }
@@ -1274,7 +1284,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     // </FS:minerjr>    
 
     // update N textures at beginning of mImageList
-    F32 half_max_time = max_time * 0.5f;
+    F32 half_max_time = max_time * 0.25f;
     U32 update_count = 0;
     static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32
 
@@ -1348,20 +1358,23 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     // First gets all the changes to the texture list due to changes in the scene/memory issues
     // but does not make the changes right away.
     int counter = 0;
+    entries_list_t allTextureRequests = mTextureRequestList->getTexturesToModify();
+    //for (auto& imagep : mTextureRequestList->getTexturesToModify())
     for (auto& imagep : mTextureRequestList->getTexturesToModify())
     {
+
         //mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
 
-        if (imagep.second->getNumRefs() > 1)
+        if (!imagep.second.isNull() && imagep.second->getNumRefs() > 1)
         {
             updateImageDecodePriority(imagep);
             mTextureRequestList->updateStats(imagep.first);
             //imagep->updateFetch();
         }
-
+        counter++;
         if (timer.getElapsedTimeF32() > half_max_time)
         {
-            break;
+           // break;
         }
     }
     // Now the system will go over all the requested changes and prune the changes    
@@ -1370,21 +1383,24 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     //for (auto& imagep : entries)
     for (auto& imagep : mTextureRequestList->getTexturesToModify())
     {
-        mLastUpdateKey = LLTextureKey(imagep.second->getID(), (ETexListType)imagep.second->getTextureListType());
-
-        if (imagep.second->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect
-                                      // of some other image updating)
+        if (!imagep.second.isNull())
         {
-            //updateImageDecodePriority(imagep);
-            imagep.second->updateFetch();
-        }
+            mLastUpdateKey = LLTextureKey(imagep.second->getID(), (ETexListType)imagep.second->getTextureListType());
 
+            if (imagep.second->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect
+                // of some other image updating)
+            {
+                //updateImageDecodePriority(imagep);
+                imagep.second->updateFetch();
+            }
+        }
         if (timer.getElapsedTimeF32() > max_time)
         {
-            break;
+            //break;
         }
     }
-
+    // Clear the list (Maybe keep around to track and resort further requests)
+    mTextureRequestList->clearRequests();
     // </FS:minerjr>
     return timer.getElapsedTimeF32();
 }
@@ -1432,12 +1448,16 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
         //imagep->processTextureStats();
         //addImageToList(imagep);
         LLViewerFetchedTexture* imagep = *iter;
-        FSTextureRequest newRequest = FSTextureRequestLists::initRequestFromTexture(imagep);
-        newRequest = imagep->processTextureStats(newRequest);
+        //FSTextureRequest newRequest = {0};//FSTextureRequestList::initRequestFromTexture(imagep);
+        mTextureRequestList->addTextureToModify(imagep);
+        mTextureRequestList->getLastPair().first.Raw = imagep->processTextureStats(mTextureRequestList->getLastPair().first).Raw;
+        mTextureRequestList->updateStats(mTextureRequestList->getLastPair().first);
         addImageToList(imagep);
         // </FS:minerjr
     }
     image_list.clear();
+
+    mTextureRequestList->processRequests(true);
 
     // Update fetch (decode)
     for (image_list_t::iterator iter = mImageList.begin();
@@ -1446,6 +1466,8 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
         LLViewerFetchedTexture* imagep = *iter++;
         imagep->updateFetch();
     }
+
+    mTextureRequestList->clearRequests();
     std::shared_ptr<LL::WorkQueue> main_queue = LLImageGLThread::sEnabledTextures ? LL::WorkQueue::getInstance("mainloop") : NULL;
     // Run threads
     size_t fetch_pending = 0;
@@ -1471,8 +1493,14 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
          iter != mImageList.end(); )
     {
         LLViewerFetchedTexture* imagep = *iter++;
+        mTextureRequestList->addTextureToModify(imagep);
+        mTextureRequestList->getLastPair().first.Raw = imagep->processTextureStats(mTextureRequestList->getLastPair().first).Raw;
+        mTextureRequestList->updateStats(mTextureRequestList->getLastPair().first);
         imagep->updateFetch();
     }
+
+    mTextureRequestList->processRequests(true);
+
     max_time -= timer.getElapsedTimeF32();
     max_time = llmax(max_time, .001f);
     F32 create_time = updateImagesCreateTextures(max_time);
@@ -2149,25 +2177,11 @@ bool LLUIImageList::initFromFile()
 
 // <FS:minerjr>
 //
-const U64 FSTextureRequestLists::FLIP_DISCARD_TEXTURE_MASK = 0;
 // This is a new class which allows tracking of requested changes for the textures
 // This can prevent overages before they happen as the requests for higher resoltuion textures
 // can be denied if the requests will put the system into high memory usage
-FSTextureRequestLists::FSTextureRequestLists()
+FSTextureRequestList::FSTextureRequestList()
 {
-    /*
-    // Loop over all of our buffers (Currently 2)
-    for (int x = 0; x < NUMBER_OF_TEXTURE_REQUEST_LISTS; x++)
-    {
-        // Set the size of the list and total memory to 0
-        mTextureRequestLists[x].mSizeOfList = 0;
-        mTextureRequestLists[x].mTotalMemory = 0;
-        // Reserve the max texture request size for the buffer to prevent uncessary reallocations
-        // every time we add a new request to the list. This size could be made to grow possibly
-        mTextureRequestLists[x].mTexturesRequests.reserve(MAX_TEXTURE_REQUEST_SIZE);
-        mTextureRequestLists[x].mTextureIndicies.reserve(MAX_TEXTURE_REQUEST_SIZE);
-    }
-    */
     // Reserve the list of textures to modify
     mTexturesToModify.reserve(MAX_TEXTURE_REQUEST_SIZE);
 
@@ -2178,8 +2192,29 @@ FSTextureRequestLists::FSTextureRequestLists()
 
     mNumberOfDecreaseRequests = 0;
     mNumberOfIncreaseRequests = 0;
-
+    
     static FSTextureRequest Mask;
+    Mask.Raw = 0;
+
+    Mask.TextureRequest.DecreasePixelChange = 1;
+    Mask.TextureRequest.NeedToDelete = 1;
+    Mask.TextureRequest.ScaleDown = 1;
+    Mask.TextureRequest.PixelChange = 67108863;
+    U64 bit_e = _byteswap_uint64(Mask.Raw);
+
+    LL_INFOS() << "FTQ << Low mem reject Increase: " << Mask.Raw << " " << bit_e << LL_ENDL;
+
+    Mask.Raw = 0;
+    Mask.TextureRequest.OnScreen = 1;
+    Mask.TextureRequest.DecreasePixelChange = 1;
+    Mask.TextureRequest.NeedToDelete = 1;
+    Mask.TextureRequest.ScaleDown = 1;
+    Mask.TextureRequest.PixelChange = 67108863;
+    bit_e = _byteswap_uint64(Mask.Raw);
+
+    LL_INFOS() << "FTQ << Low mem Allow Increase: " << Mask.Raw << " " << bit_e << LL_ENDL;
+    
+
     Mask.Raw = 0;
     Mask.TextureRequest.Type = LLViewerTexture::INVALID_TEXTURE_TYPE;
     Mask.TextureRequest.NewDiscard = MAX_DISCARD_LEVEL + 1;    
@@ -2187,147 +2222,192 @@ FSTextureRequestLists::FSTextureRequestLists()
     Mask.TextureRequest.NewDesiredDiscard = MAX_DISCARD_LEVEL + 1;
     Mask.TextureRequest.OldDesiredDiscard = MAX_DISCARD_LEVEL + 1;
     Mask.TextureRequest.TextListType = 1;
+    bit_e = _byteswap_uint64(Mask.Raw);
 
-    printf("Mask Value %llu", Mask.Raw);
+    LL_INFOS() << "FTQ << Normal: " << Mask.Raw << " " << bit_e << LL_ENDL;
+
+    printf("Test");
     
 }
 
-// Attempts to add a request to the specified texture list
-// Currently will just keep increasing the size of the list, but
-// could be made to reject the request if too many, or re-adjust
-// the order of the list and reject the lowest values item
-/*
-bool FSTextureRequestLists::addRequest(FSTextureRequest newRequest, S32 textureIndex)
+// Clears the list of requests and reset the interal track values
+// This could be skipped to track the historical data so the system
+// remembers more then 1 frames worth of changes
+bool FSTextureRequestList::clearRequests()
 {
-    FSTextureRequestList* currentRequest = &mTextureRequestLists[(newRequest.TextureRequest.NewDesiredDiscard < newRequest.TextureRequest.OldDesiredDiscard || newRequest.TextureRequest.ScaleDown || newRequest.TextureRequest.NeedToDeleted) ? 0 : 1];
+    // Reset all of the counts and memory tracked as the list is now empty
+    mDecreaseRAMAmount = 0;
+    mIncreaseRAMAmount = 0;
+    mDecreaseVRAMAmount = 0;
+    mIncreaseVRAMAMount = 0;
 
-    if (currentRequest != NULL)
-    {
-        // Check to see if the mSizeOfIncreastList is at the end of the list already
-        if (currentRequest->mSizeOfList >= currentRequest->mTexturesRequests.size())
-        {
-            // We can either increase the size of the list by 1, increase by an entire MAX_TEXTURE_REQUEST_SIZE
-            // or could drop the messsage, or depending on the values of the message, drop a lower quality message
-            // Lets increase the size by the max size to support handling more requests
-            currentRequest->mTexturesRequests.reserve(currentRequest->mTexturesRequests.size() + MAX_TEXTURE_REQUEST_SIZE);
-        }
-        // Assign new request to the current object
-        currentRequest->mTexturesRequests.push_back(newRequest);
+    mNumberOfDecreaseRequests = 0;
+    mNumberOfIncreaseRequests = 0;
 
-        // Assign the texture Index to the list of texture indicies
-        currentRequest->mTextureIndicies.push_back(textureIndex);
-
-        // Increase the size of the list by 1
-        currentRequest->mSizeOfList = currentRequest->mSizeOfList + 1;
-
-        // Store the pointer to 
-
-        // Add the pixel change to the total memory
-        currentRequest->mTotalMemory += newRequest.TextureRequest.PixelChange;
-
-        return true;
-    }
-
-    return false;
-}
-*/
-// Clears the list of requests and 
-bool FSTextureRequestLists::clearRequests()
-{
-    /*
-    // Don't need to zero out the list of requests as they will be writen over top
-    for (int x = 0; x < NUMBER_OF_TEXTURE_REQUEST_LISTS; x++)
-    {
-        // Just reset the
-        mTextureRequestLists[x].mSizeOfList = 0;
-        mTextureRequestLists[x].mTotalMemory = 0;
-    }
-    */
+    // Clear the list change requests and unfulliled requests
+    // We could store the unfinsihed requests for a second pass
     mTexturesToModify.clear();
 
     return true;
 }
 
-// This method process the list of requests by changing the order of the 
-bool FSTextureRequestLists::processRequests()
+// This method process the list of requests by changing the order of them depending on the state of memory
+// and also tracks how much memory is used up
+// Returns true is all the rquests can be processed, false if textres had to be rejected
+bool FSTextureRequestList::processRequests(bool ignore_limits)
 {
-
+    ignore_limits = true;
+    //return false;
     // First, get the current VRAM of the system and if we process as is, if we will go over budget
-    // So we take the remaining VRAM and subtract the amount of additional VRAM we want to use minus
-    // the amount we could free
-    S64 VRAMBudget = LLViewerTexture::sFreeVRAMMegabytes - mIncreaseVRAMAMount + mDecreaseVRAMAmount;
+    // So we take the remaining VRAM and minus the amount we want to free (Bit shift 20 to go from bytes to megabytes)
+    F32 VRAMBudget = LLViewerTexture::sFreeVRAMMegabytes + (F32)(mDecreaseVRAMAmount >> 20);
+    // Now, calculcate the amount of memory we want to increase the budget by 
+    F32 IncreaseVRAMAmount = (F32)(mIncreaseVRAMAMount >> 20);
 
-    // If the VRAM budget goes below 0, then we need to save VRAM
-    if (VRAMBudget < 0)
+    S32 index = 0;// Used to loop over the items
+    // If the VRAM budget goes below 0 due to the desired texture increases, then
+    if (VRAMBudget - mIncreaseVRAMAMount < 0 && !ignore_limits)
     {
-        // If we don't support any of the request where we would increase the VRAM, will that make us under
-        // budget
-        if (VRAMBudget + mIncreaseVRAMAMount > 0)
+        // If we drop of the requests for texture increases, is there any budget left?
+        // If there is some room left, then
+        if (VRAMBudget > 0)
         {
-            // So there is room to allow some of the increase textures to go through.
-            // So 
+            // If there is some room, we can process all the reduction requests and some of the increase requests
+            std::sort(mTexturesToModify.begin(), mTexturesToModify.end(), sort_low_memory_allow_increases);
+            
+            //Just accept all the decreases as is
+            // Loop over all of the  texture decrease textures
+            for (index = 0; index < mNumberOfDecreaseRequests; index++)
+            {
+                // Apply the request to the current texture
+                applyRequest(index);
+            }
+            F32 addedAmount = 0;
+            // For the increases, we want to add until we get just before going over budget
+            // Loop over all of the  texture decrease textures
+            // There is only 1 buffer, so just continue from the end of the decrease requests
+            for (; index < mNumberOfIncreaseRequests; index++)
+            {
+                // Check to see if the next request will put us over budget
+                // Caluclate the added amount for the current texture
+                addedAmount = mTexturesToModify[index].first.TextureRequest.PixelChange * (F32)(0x0000000000000001LL << mTexturesToModify[index].first.TextureRequest.PixelBitDepth);
+
+                VRAMBudget -= addedAmount;
+                // If we add this texture, does it make us go over budget, if not apply the texture request
+                if (VRAMBudget > 0)
+                {
+                    // Apply the request to the current texture
+                    applyRequest(index);
+                }
+                // Else we hit out texture limit, so break out of the loop
+                else
+                {
+                    break;
+                }
+            }
+
+            return false;
         }
         // Else, even leaving off the increase requests, we will still be over budget
         else
         {
             // So we only want to approve the request that decrease the VRAM and hope that more requets to reduce the VRAM
             // come in and save the texture budget
+            std::sort(mTexturesToModify.begin(), mTexturesToModify.end(), sort_low_memory_drop_increases);
 
+            //Just accept all the decreases as is
+            // Loop over all of the  texture decrease textures
+            for (index = 0; index < mNumberOfDecreaseRequests; index++)
+            {
+                // Apply the request to the current texture
+                applyRequest(index);
+            }
+
+            return false;
         }
     }
     // Otherwise, we can just accept the list, but still sort by priority
-    else
-    {
+    std::sort(mTexturesToModify.begin(), mTexturesToModify.end(), FSTextureRequestList::sort_normal_memory);
 
+    //Just accept all the decreases as is
+    // Loop over all of the  texture decrease textures
+    for (index = 0; index < mTexturesToModify.size(); index++)
+    {
+        // Apply the request to the current texture
+        applyRequest(index);
     }
+
+    return true;
 
 }
 
-bool FSTextureRequestLists::updateStats(FSTextureRequest currentTextureRequest)
+// Method that updates the stats of the current texture environment based
+// upon the request passed in.
+bool FSTextureRequestList::updateStats(FSTextureRequest currentTextureRequest)
 {
-    if (currentTextureRequest.TextureRequest.DecrasePixelChange || currentTextureRequest.TextureRequest.ScaleDown ||
-        currentTextureRequest.TextureRequest.NeedToDeleted)
+    if (currentTextureRequest.TextureRequest.DecreasePixelChange || currentTextureRequest.TextureRequest.ScaleDown ||
+        currentTextureRequest.TextureRequest.NeedToDelete)
     {
-        mDecreaseVRAMAmount += currentTextureRequest.TextureRequest.PixelChange;
+        mDecreaseVRAMAmount += currentTextureRequest.TextureRequest.PixelChange * (0x0000000000000001LL << currentTextureRequest.TextureRequest.PixelBitDepth);
+        mNumberOfDecreaseRequests++;
     }
     else
     {
-        mIncreaseVRAMAMount += currentTextureRequest.TextureRequest.PixelChange;
+        mIncreaseVRAMAMount += currentTextureRequest.TextureRequest.PixelChange * (0x0000000000000001LL << currentTextureRequest.TextureRequest.PixelBitDepth);
+        mNumberOfIncreaseRequests++;
     }
 
     return true;
 }
 
-bool FSTextureRequestLists::applyRequest()
+// Method takes in an index into the sorted array of texture request and texture pairs
+// and applys the new chages to the image
+bool FSTextureRequestList::applyRequest(S32 index)
 {
-
-}
-
-bool FSTextureRequestLists::addTextureToModify(LLPointer<LLViewerFetchedTexture> newTexture)
-{
-    // If the vector is full, we could reject the request to add more textures to track
-    // Or we could increase the buffer size and continue
-    if (mTexturesToModify.size() == mTexturesToModify.capacity())
+    // Just a basic validation check to make sure we are not out of bounds
+    if (index >= 0 && index < mTexturesToModify.size())
     {
-        //mTexturesToModify.resize(mTexturesToModify.capacity() + MAX_TEXTURE_REQUEST_SIZE);
-        return false;
+        // Get the texture itself to update its internal structure as some values
+        // are private and we can only read them...
+        return mTexturesToModify[index].second->applyTextureRequest(mTexturesToModify[index].first);
     }
 
-    mTexturesToModify.push_back(std::pair(initRequestFromTexture(newTexture), newTexture));
-        
+    return false;
+}
 
-    return true;
+// Method which adds a texture to the list of textures
+bool FSTextureRequestList::addTextureToModify(LLPointer<LLViewerFetchedTexture> newTexture)
+{
+    // If the texture is not NULL, then we can add it
+    if (newTexture.notNull())
+    {
+        // If the vector is full, we could reject the request to add more textures to track
+        // Or we could increase the buffer size and continue
+        if (mTexturesToModify.size() == mTexturesToModify.capacity())
+        {
+            // For now, use a hard limit of MAX_TEXTURE_REQUEST_SIZE (512)
+            mTexturesToModify.resize(mTexturesToModify.capacity() + MAX_TEXTURE_REQUEST_SIZE);
+            //return false; // Could comment this out to support allowing the list to grow
+        }
+        FSTextureRequestPair newPair = std::pair(initRequestFromTexture(newTexture), newTexture);
+        mTexturesToModify.push_back(newPair);
+
+        return true;
+    }
+
+    return false;
 }
 
 // static
 // Helper function to init a request from an existing texture
-FSTextureRequest FSTextureRequestLists::initRequestFromTexture(LLViewerFetchedTexture* imagep)
+FSTextureRequest FSTextureRequestList::initRequestFromTexture(LLViewerFetchedTexture* imagep)
 {
     FSTextureRequest fsTextureRequest;
     fsTextureRequest.Raw = 0;
     fsTextureRequest.TextureRequest.OldDiscard = imagep->getDiscardLevel();
     fsTextureRequest.TextureRequest.OldDesiredDiscard = imagep->getDesiredDiscardLevel();
     fsTextureRequest.TextureRequest.OldBoostLevel = imagep->getBoostLevel();
+    fsTextureRequest.TextureRequest.PixelBitDepth = imagep->getGLTexture() != NULL && imagep->getPrimaryFormat() > 0 ? LLImageGL::dataFormatComponents(imagep->getPrimaryFormat()) : 3;//imagep->getComponents() >> 1;
     // Copy the old values to the new values incase there is no changes
     fsTextureRequest.TextureRequest.NewBoostLevel = fsTextureRequest.TextureRequest.OldBoostLevel;
     fsTextureRequest.TextureRequest.NewDiscard    = fsTextureRequest.TextureRequest.OldDiscard;
