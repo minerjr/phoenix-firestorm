@@ -675,7 +675,7 @@ public:
     void        cacheImpostorValues();
     void        setImpostorDim(const LLVector2& dim);
     static void resetImpostors();
-    static void updateImpostors();
+    static void updateImpostors(F32 max_time);
     LLRenderTarget mImpostor;
 // [RLVa:KB] - Checked: RLVa-2.4 (@setcam_avdist)
     mutable bool mNeedsImpostorUpdate;

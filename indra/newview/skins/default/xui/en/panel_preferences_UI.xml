@@ -259,6 +259,16 @@
         left_delta="0"
         height="16"
         width="350" />
+        <check_box
+        control_name="FSTestStaticVector"
+        name="FSTestStaticVector"
+        label="Static Vectors:"
+        tool_tip="When an object is being hovered over, highlight the floating text (hovertext) by moving the text to the foreground and disable its alpha"
+        layout="topleft"
+        top_pad="5"
+        left_delta="0"
+        height="16"
+        width="350" />        
         <text
          type="string"
          left="10"

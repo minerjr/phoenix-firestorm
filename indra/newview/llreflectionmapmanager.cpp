@@ -202,8 +202,11 @@ static bool check_priority(LLReflectionMap* a, LLReflectionMap* b)
 }
 
 // helper class to seed octree with probes
-void LLReflectionMapManager::update()
+void LLReflectionMapManager::update(F32 max_time)
 {
+    static LLCachedControl<S32> sDetail(gSavedSettings, "RenderReflectionProbeDetail", -1);
+    static LLCachedControl<S32> sLevel(gSavedSettings, "RenderReflectionProbeLevel", 3);
+    static LLCachedControl<bool> use_static_vector(gSavedSettings,"FSTestStaticVector", false) ;
     if (!LLPipeline::sReflectionProbesEnabled || gTeleportDisplay || LLStartUp::getStartupState() < STATE_STARTED)
     {
         return;
@@ -251,7 +254,7 @@ void LLReflectionMapManager::update()
     // process kill list
     for (auto& probe : mKillList)
     {
-        auto const & iter = std::find(mProbes.begin(), mProbes.end(), probe);
+        auto const& iter = std::find(mProbes.begin(), mProbes.end(), probe);
         if (iter != mProbes.end())
         {
             deleteProbe((U32)(iter - mProbes.begin()));
@@ -276,8 +279,7 @@ void LLReflectionMapManager::update()
 
     bool did_update = false;
 
-    static LLCachedControl<S32> sDetail(gSavedSettings, "RenderReflectionProbeDetail", -1);
-    static LLCachedControl<S32> sLevel(gSavedSettings, "RenderReflectionProbeLevel", 3);
+
 
     bool realtime = sDetail >= (S32)LLReflectionMapManager::DetailLevel::REALTIME;
 
@@ -291,9 +293,11 @@ void LLReflectionMapManager::update()
         did_update = true;
         doProbeUpdate();
     }
-
-    // update distance to camera for all probes
-    std::sort(mProbes.begin()+1, mProbes.end(), CompareProbeDistance());
+    if (sLevel > 0 || !use_static_vector)
+    {
+        // update distance to camera for all probes
+        std::sort(mProbes.begin() + 1, mProbes.end(), CompareProbeDistance());
+    }
     llassert(mProbes[0] == mDefaultProbe);
     llassert(mProbes[0]->mCubeArray == mTexture);
     llassert(mProbes[0]->mCubeIndex == 0);
@@ -318,7 +322,10 @@ void LLReflectionMapManager::update()
 
     // next distribute the free indices
     U32 count = llmin(mReflectionProbeCount, (U32)mProbes.size());
-
+    if (sLevel == 0 && use_static_vector)
+    {
+        count = 1;
+    }
     for (U32 i = 1; i < count && !mCubeFree.empty(); ++i)
     {
         // find the closest probe that needs a cube index
@@ -373,7 +380,7 @@ void LLReflectionMapManager::update()
         if (probe->mComplete)
         {
             probe->autoAdjustOrigin();
-            probe->mFadeIn = llmin((F32) (probe->mFadeIn + gFrameIntervalSeconds), 1.f);
+            probe->mFadeIn = llmin((F32)(probe->mFadeIn + gFrameIntervalSeconds), 1.f);
         }
         if (probe->mOccluded && probe->mComplete)
         {
@@ -393,7 +400,7 @@ void LLReflectionMapManager::update()
                 (oldestProbe == nullptr ||
                     check_priority(probe, oldestProbe)))
             {
-               oldestProbe = probe;
+                oldestProbe = probe;
             }
         }
 
@@ -412,7 +419,7 @@ void LLReflectionMapManager::update()
             break;
         }
     }
-
+    
     if (realtime && closestDynamic != nullptr)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmu - realtime");

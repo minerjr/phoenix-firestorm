@@ -1201,10 +1201,14 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-
+    static LLCachedControl<bool> use_static_vector(gSavedSettings,"FSTestStaticVector", false) ;
     typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
+    static entries_list_t entries_s;
     entries_list_t entries;
-
+    if (entries_s.capacity() < mUUIDMap.size())
+    {
+        entries_s.reserve(mUUIDMap.size() + 1024);
+    }
     // update N textures at beginning of mImageList
     U32 update_count = 0;
     static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32
@@ -1214,7 +1218,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
-    if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+    if (LLViewerTexture::sDesiredDiscardBias > 1.f && !use_static_vector)
     {
         // we are over memory target, update more agresively
         update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
@@ -1225,7 +1229,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
 
         // copy entries out of UUID map for updating
-        entries.reserve(update_count);
+        if (!use_static_vector) entries.reserve(update_count);
         uuid_map_t::iterator iter = mUUIDMap.upper_bound(mLastUpdateKey);
         while (update_count-- > 0)
         {
@@ -1236,7 +1240,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
             if (iter->second->getGLTexture())
             {
-                entries.push_back(iter->second);
+                use_static_vector ? entries_s.push_back(iter->second) : entries.push_back(iter->second);
             }
             ++iter;
         }
@@ -1244,7 +1248,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     LLTimer timer;
 
-    for (auto& imagep : entries)
+    for (auto& imagep : (use_static_vector ? entries_s : entries))
     {
         mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
 
@@ -1259,7 +1263,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             break;
         }
     }
-
+    entries_s.clear();
     return timer.getElapsedTimeF32();
 }
 

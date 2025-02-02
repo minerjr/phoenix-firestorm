@@ -919,7 +919,7 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
     LLVOAvatar::cullAvatarsByPixelArea();
 }
 
-void LLViewerObjectList::update(LLAgent &agent)
+void LLViewerObjectList::update(LLAgent& agent)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_NETWORK;
     // <FS:Ansariel> Speed up debug settings
@@ -955,8 +955,8 @@ void LLViewerObjectList::update(LLAgent &agent)
         interp_time = 3.0f;
         phase_out_time = 1.0f;
     }
-    LLViewerObject::setPhaseOutUpdateInterpolationTime( interp_time );
-    LLViewerObject::setMaxUpdateInterpolationTime( phase_out_time );
+    LLViewerObject::setPhaseOutUpdateInterpolationTime(interp_time);
+    LLViewerObject::setMaxUpdateInterpolationTime(phase_out_time);
     LLViewerObject::setMaxRegionCrossingInterpolationTime(region_interp_time);
 
     // <FS:Ansariel> Speed up debug settings
@@ -971,7 +971,7 @@ void LLViewerObjectList::update(LLAgent &agent)
     // It doesn't cause any fatal problems (just some oddness with stats), so we shouldn't assert here.
 //  llassert(time > gFrameTime);
     F64Seconds time_diff = time - gFrameTime;
-    gFrameTime  = time;
+    gFrameTime = time;
     F64Seconds time_since_start = gFrameTime - gStartTime;
     gFrameTimeSeconds = time_since_start;
 
@@ -986,10 +986,16 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     const F64 frame_time = LLFrameTimer::getElapsedSeconds();
 
-    LLViewerObject *objectp = NULL;
+    LLViewerObject* objectp = NULL;
 
     // Make a copy of the list in case something in idleUpdate() messes with it
     static std::vector<LLViewerObject*> idle_list;
+
+    if (idle_list.capacity() < mActiveObjects.size())
+    {
+        // Add an additional 1024 over the current object list to try to prevent reallocating a bunch
+        idle_list.reserve(mActiveObjects.size() + 1024);
+    }
 
     U32 idle_count = 0;
     mNumAvatars = 0;

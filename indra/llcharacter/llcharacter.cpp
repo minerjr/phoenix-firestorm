@@ -38,7 +38,7 @@
 
 LLStringTable LLCharacter::sVisualParamNames(1024);
 
-std::list< LLCharacter* > LLCharacter::sInstances;
+std::vector< LLCharacter* > LLCharacter::sInstances;
 bool LLCharacter::sAllowInstancesChange = true ;
 
 //-----------------------------------------------------------------------------
@@ -53,7 +53,10 @@ LLCharacter::LLCharacter()
     mSkeletonSerialNum( 0 )
 {
     llassert_always(sAllowInstancesChange) ;
-
+    if (LLCharacter::sInstances.capacity() == 0 || LLCharacter::sInstances.size() + 1 >= LLCharacter::sInstances.capacity())
+    {
+        LLCharacter::sInstances.reserve(LLCharacter::sInstances.size() + 100);
+    }
     mMotionController.setCharacter( this );
     mPauseRequest = new LLPauseRequestHandle();
 }

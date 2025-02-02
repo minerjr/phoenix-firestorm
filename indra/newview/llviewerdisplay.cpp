@@ -918,8 +918,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 glm::mat4 proj = get_current_projection();
                 glm::mat4 mod = get_current_modelview();
                 glViewport(0,0,512,512);
-
-                LLVOAvatar::updateImpostors();
+                F32 max_imposter_update_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
+                max_imposter_update_time = llclamp(max_imposter_update_time, 0.004f, 0.010f ); // min 2ms/frame, max 5ms/frame)
+                LLVOAvatar::updateImpostors(max_imposter_update_time);
 
                 set_current_projection(proj);
                 set_current_modelview(mod);
@@ -1282,7 +1283,7 @@ void display_cube_face()
 
     gPipeline.mBackfaceCull = true;
 
-    gViewerWindow->setup3DViewport();
+    //gViewerWindow->setup3DViewport();
 
     if (gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_HUD))
     { //don't draw hud objects in this frame

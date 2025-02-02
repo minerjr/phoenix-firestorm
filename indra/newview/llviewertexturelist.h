@@ -236,7 +236,8 @@ public:
     static U32 sNumFastCacheReads;
 
 private:
-    typedef std::map< LLTextureKey, LLPointer<LLViewerFetchedTexture> > uuid_map_t;
+    //typedef std::unordered_multimap<LLUUID id, ETexListType tex_type>
+    typedef std::unordered_map< LLTextureKey, LLPointer<LLViewerFetchedTexture> > uuid_map_t;
     uuid_map_t mUUIDMap;
     LLTextureKey mLastUpdateKey;
 

@@ -10931,6 +10931,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("generateImpostor");
+    static LLCachedControl<bool> use_static_vector(gSavedSettings,"FSTestStaticVector", false) ;
+    // If there is not enough texture RAM, this will ultimatly fail as there the buffer allocation will fail in the end
+    if (LLViewerTexture::sDesiredDiscardBias > 1.0f && use_static_vector) return;
     LLGLState::checkStates();
 
     static LLCullResult result;
