@@ -1039,7 +1039,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         if (imagep->tryToClearRawImages())
         {
-
+            // Succeceded (This is just to see if it cleared.
+            LL_INFOS() << "Image  " << imagep->getID() << " just cleared it's Raw buffers" << LL_ENDL ;
         }
 
         if (imagep->hasSavedRawImage())
