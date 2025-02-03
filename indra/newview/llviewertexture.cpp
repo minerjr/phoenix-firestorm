@@ -1146,7 +1146,12 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mPauseLoadedCallBacks = false;
 
     mNeedsCreateTexture = false;
-
+    // <FS:minerjr>
+    //mRawImages.resize(MAX_DISCARD_LEVEL);
+    //mAuxRawImages.resize(MAX_DISCARD_LEVEL);
+    mRawImages.fill(nullptr);
+    mAuxRawImages.fill(nullptr);
+    // </FS:minerjr>
     mIsRawImageValid = false;
     mRawDiscardLevel = INVALID_DISCARD_LEVEL;
     mMinDiscardLevel = 0;
@@ -1173,6 +1178,8 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mForceCallbackFetch = false;
 
     mFTType = FTT_UNKNOWN;
+
+    mLastRawImageAccess = 0.0f;
 }
 
 LLViewerFetchedTexture::~LLViewerFetchedTexture()
@@ -1404,8 +1411,22 @@ void LLViewerFetchedTexture::addToCreateTexture()
         mNeedsCreateTexture = false;
         destroyRawImage();
     }
-    else if(!force_update && getDiscardLevel() > -1 && getDiscardLevel() <= mRawDiscardLevel)
+    else if (!force_update && getDiscardLevel() > -1 && getDiscardLevel() <= mRawDiscardLevel)
     {
+        // <FS:minerjr>
+        // Make sure that the raw discard is valid
+        if (mRawDiscardLevel >= 0 && mRawDiscardLevel < mRawImages.size())
+        {
+            // If the raw is OK, but not the same as what is requried, still save it
+            // Track the last time the raw images were updated
+            mLastRawImageAccess = sCurrentTime;
+            // Store the generated fetch raw data        
+            mRawImages[mRawDiscardLevel] = mRawImage;
+            // If there is aux raw imae, store it as well
+            if (mHasAux)mAuxRawImages[mRawDiscardLevel] = mAuxRawImage;
+        }
+        // </FS:minerjr>
+        
         mNeedsCreateTexture = false;
         destroyRawImage();
     }
@@ -1933,11 +1954,37 @@ bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 curre
                     mRawImage = mRawImage->scaled(expected_width, expected_height);
                 }
             }
-
+            if (mIsRawImageValid)
+            {
+                // <FS:minerjr>
+                if (mRawDiscardLevel >= 0 && mRawDiscardLevel < mRawImages.size())
+                {
+                    // If the raw is OK, but not the same as what is requried, still save it
+                    // Track the last time the raw images were updated
+                    mLastRawImageAccess = sCurrentTime;
+                    // Store the generated fetch raw data
+                    mRawImages[mRawDiscardLevel] = mRawImage;
+                    // If there is aux raw imae, store it as well
+                    if (mHasAux)mAuxRawImages[mRawDiscardLevel] = mAuxRawImage;
+                }
+                // </FS:minerjr>
+            }
             return true;
         }
         else
         {
+            // <FS:minerjr>
+            // If there is data, and the raw discard level is valid, maybe we should store it just in case
+            if (mRawImage->getDataSize() > 0 && mRawDiscardLevel >= 0 && mRawDiscardLevel < mRawImages.size())
+            {
+                // Track the last time the raw images were updated
+                mLastRawImageAccess = sCurrentTime;
+                // Store the generated fetch raw data
+                mRawImages[fetch_discard] = mRawImage;
+                // If there is aux raw imae, store it as well
+                if (mHasAux)mAuxRawImages[fetch_discard] = mAuxRawImage;               
+            }
+            // </FS:minerjr>
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - data not needed");
             // Data is ready but we don't need it
             // (received it already while fetcher was writing to disk)
@@ -1992,6 +2039,18 @@ bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 curre
             // Potentially can happen when TEX_LIST_SCALE and TEX_LIST_STANDARD
             // get requested for the same texture id at the same time
             // (two textures, one fetcher)
+            // <FS:minerjr>
+            // If there is data, and the raw discard level is valid, maybe we should store it just in case
+            if (mRawImage->getDataSize() > 0 && mRawDiscardLevel >= 0 && mRawDiscardLevel < mRawImages.size())
+            {
+                // Track the last time the raw images were updated
+                mLastRawImageAccess = sCurrentTime;
+                // Store the generated fetch raw data
+                mRawImages[fetch_discard] = mRawImage;
+                // If there is aux raw imae, store it as well
+                if (mHasAux)mAuxRawImages[fetch_discard] = mAuxRawImage;               
+            }
+            // </FS:minerjr>
             destroyRawImage();
         }
     }
@@ -2143,6 +2202,22 @@ bool LLViewerFetchedTexture::updateFetch()
                 make_request = false;
             }
         }
+
+        // <FS:minerjr>
+        // Track if we need to do a fetch
+        // Check if we have the desired texture on the raw iamge list
+        if (desired_discard < mRawImages.size() && mRawImages[desired_discard].notNull())
+        {
+            // If we do, and the current request does not need an aux, or if there is a need for
+            // and aux texture and we have it, then 
+            if (!needsAux() || (needsAux() && mAuxRawImages[desired_discard].notNull()))
+            {
+                // Decode the raw texture instead of creating a new request
+
+                make_request = false;
+            }
+        }
+        // </FS:minerjr>
     }
 
     if (make_request)
@@ -2182,9 +2257,37 @@ bool LLViewerFetchedTexture::updateFetch()
             mRequestedDiscardLevel = llmin(desired_discard, fetch_request_response);
             mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
                                                        mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
-        }
-        else if (fetch_request_response == LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
+        }        
+        else if (fetch_request_response <= LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
         {
+            // We add to the fetch response for the errror transition, what the desired discard was.
+            // So we take the difference between the base -4 value and - (-4 - desired discard)
+            // which should be 0 or above (IE a valid response)
+            fetch_request_response = (LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION - fetch_request_response);
+            if (mRawImage.notNull()) sRawCount--;
+            if (mAuxRawImage.notNull()) sAuxCount--;
+            // Track the last time the raw images were updated
+            mLastRawImageAccess = sCurrentTime;
+            if (fetch_request_response >= 0 && fetch_request_response < mRawImages.size())
+            {
+                mRawImage = mRawImages[fetch_request_response];
+                mAuxRawImage = mRawImages[fetch_request_response];
+            }
+            else
+            {
+                mRawImage = nullptr;
+                mAuxRawImage = nullptr;
+            }
+            if (mRawImage.notNull()) sRawCount++;
+            if (mAuxRawImage.notNull())
+            {
+                mHasAux = true;
+                sAuxCount++;
+            }
+           
+            processFetchResults(desired_discard, current_discard, fetch_request_response, decode_priority);
+        }
+        /*
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - processing transition error");
             // Request wasn't created because similar one finished or is in a transitional state, check worker state
             // As an example can happen if an image (like a server bake always fetches at dis 0), was scaled down to
@@ -2210,7 +2313,7 @@ bool LLViewerFetchedTexture::updateFetch()
                 processFetchResults(desired_discard, current_discard, decoded_discard, decode_priority);
             }
         }
-
+        */
         // If createRequest() failed, that means one of two things:
         // 1. We're finishing up a request for this UUID, so we
         //    should wait for it to complete
@@ -2582,7 +2685,7 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
     S32 current_aux_discard = MAX_DISCARD_LEVEL + 1;
     S32 best_aux_discard = MAX_DISCARD_LEVEL + 1;
 
-    if (mIsRawImageValid)
+    if (mIsRawImageValid)    
     {
         // If we have an existing raw image, we have a baseline for the raw and auxiliary quality levels.
         current_raw_discard = mRawDiscardLevel;
@@ -2596,7 +2699,25 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
         // Do this by forcing the best aux discard to be 0.
         best_aux_discard = 0;
     }
+    
+    // <FS:minerjr>
+    // Search if we have a better raw image already
+    S32 foundRawIndex = 0;
+    for (; foundRawIndex < MAX_DISCARD_LEVEL + 1; foundRawIndex++)
+    {
+        if (mRawImages[foundRawIndex].notNull()) break;
+    }
 
+    if ((!mIsRawImageValid || foundRawIndex < mRawDiscardLevel) && foundRawIndex >= 0 && foundRawIndex < mRawImages.size())
+    {
+        current_raw_discard = foundRawIndex;
+        best_raw_discard = llmin(best_raw_discard, foundRawIndex);
+        best_aux_discard = llmin(best_aux_discard, foundRawIndex);
+        current_aux_discard = llmin(current_aux_discard, best_aux_discard);
+        // Track the last time the raw images were updated
+        mLastRawImageAccess = sCurrentTime;
+    }
+    // </FS:minerjr>
 
     //
     // See if any of the callbacks would actually run using the data that we can provide,
@@ -2658,7 +2779,7 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
     //
     // Run raw/auxiliary data callbacks
     //
-    if (run_raw_callbacks && mIsRawImageValid && (mRawDiscardLevel <= getMaxDiscardLevel()))
+    if (run_raw_callbacks && ((foundRawIndex == current_raw_discard && foundRawIndex < getMaxDiscardLevel()) || (mIsRawImageValid && mRawDiscardLevel <= getMaxDiscardLevel())))
     {
         // Do callbacks which require raw image data.
         //LL_INFOS() << "doLoadedCallbacks raw for " << getID() << LL_ENDL;
@@ -2669,7 +2790,7 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
         {
             callback_list_t::iterator curiter = iter++;
             LLLoadedCallbackEntry *entryp = *curiter;
-            if (entryp->mNeedsImageRaw && (entryp->mLastUsedDiscard > mRawDiscardLevel))
+            if (entryp->mNeedsImageRaw && (entryp->mLastUsedDiscard > current_raw_discard))
             {
                 // If we've loaded all the data there is to load or we've loaded enough
                 // to satisfy the interested party, then this is the last time that
@@ -2680,11 +2801,18 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
                 {
                     LL_WARNS() << "Raw Image with no Aux Data for callback" << LL_ENDL;
                 }
-                bool final = mRawDiscardLevel <= entryp->mDesiredDiscard;
+                bool final = current_raw_discard <= entryp->mDesiredDiscard;
                 //LL_INFOS() << "Running callback for " << getID() << LL_ENDL;
                 //LL_INFOS() << mRawImage->getWidth() << "x" << mRawImage->getHeight() << LL_ENDL;
-                entryp->mLastUsedDiscard = mRawDiscardLevel;
-                entryp->mCallback(true, this, mRawImage, mAuxRawImage, mRawDiscardLevel, final, entryp->mUserData);
+                entryp->mLastUsedDiscard = current_raw_discard;
+                if (foundRawIndex == current_raw_discard)
+                {
+                    entryp->mCallback(true, this, mRawImages[foundRawIndex], mAuxRawImages[foundRawIndex], current_raw_discard, final, entryp->mUserData);
+                }
+                else
+                {
+                    entryp->mCallback(true, this, mRawImage, mAuxRawImage, current_raw_discard, final, entryp->mUserData);
+                }
                 if (final)
                 {
                     iter = mLoadedCallbackList.erase(curiter);
@@ -2895,6 +3023,23 @@ void LLViewerFetchedTexture::forceToSaveRawImage(S32 desired_discard, F32 kept_t
         mDesiredSavedRawDiscardLevel = desired_discard;
     }
 }
+
+// <FS:minerjr>
+bool LLViewerFetchedTexture::tryToClearRawImages()
+{
+    if (mLastRawImageAccess != 0.0f && sCurrentTime - mLastRawImageAccess > 30.0f)
+    {
+        for (S32 index = 0; index < MAX_DISCARD_LEVEL; index++)
+        {
+            mRawImages[index] = nullptr;
+            mAuxRawImages[index] = nullptr;
+        }
+        mLastRawImageAccess = 0.0f;
+        return true;
+    }
+    return false;
+}
+// </FS:minerjr>
 
 void LLViewerFetchedTexture::readbackRawImage()
 {

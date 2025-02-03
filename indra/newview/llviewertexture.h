@@ -414,7 +414,7 @@ public:
     S32         getRawImageLevel() const {return mRawDiscardLevel;}
     bool        isRawImageValid()const { return mIsRawImageValid ; }
     void        forceToSaveRawImage(S32 desired_discard = 0, F32 kept_time = 0.f) ;
-
+    bool        tryToClearRawImages();
     // readback the raw image from OpenGL if mRawImage is not valid
     void        readbackRawImage();
 
@@ -508,11 +508,21 @@ protected:
     F32             mLastCallBackActiveTime;
 
     LLPointer<LLImageRaw> mRawImage;
+    // <FS:minerjr>    
+    // Replace the single raw iamge with a list of raw iamges (Sized to MAX_DISCARD_LEVEL + 1)
+    //std::vector<LLPointer<LLImageRaw>> mRawImages;
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mRawImages;
+
+    F32 mLastRawImageAccess;
+    // </FS:minerjr>
     S32 mRawDiscardLevel = -1;
 
     // Used ONLY for cloth meshes right now.  Make SURE you know what you're
     // doing if you use it for anything else! - djs
     LLPointer<LLImageRaw> mAuxRawImage;
+    // Replace the raw aux image with a vector of raw images (Sized to the MAX_DISCARD_LEVEL + 1)    
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mAuxRawImages;
+    // </FS:minerjr>
 
     //keep a copy of mRawImage for some special purposes
     //when mForceToSaveRawImage is set.

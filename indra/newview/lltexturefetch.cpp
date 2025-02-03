@@ -2834,7 +2834,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         if (worker->mState == LLTextureFetchWorker::DONE && worker->mDesiredSize == llmax(desired_size, TEXTURE_CACHE_ENTRY_SIZE) && worker->mDesiredDiscard == desired_discard) {
             worker->unlockWorkMutex();                                  // -Mw
 
-            return CREATE_REQUEST_ERROR_TRANSITION; // similar request has finished, failed or is in a transitional state
+            return CREATE_REQUEST_ERROR_TRANSITION - desired_discard; // similar request has finished, failed or is in a transitional state
         }
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
