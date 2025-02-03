@@ -89,7 +89,12 @@ S32 LLViewerTexture::sImageCount = 0;
 S32 LLViewerTexture::sRawCount = 0;
 S32 LLViewerTexture::sAuxCount = 0;
 LLFrameTimer LLViewerTexture::sEvaluationTimer;
-F32 LLViewerTexture::sDesiredDiscardBias = 0.f;
+// <FS:minerjr>
+//F32 LLViewerTexture::sDesiredDiscardBias = 0.f;
+F32 LLViewerTexture::sDesiredDiscardBias = 1.f; // This should be 1.0 as that is the lower band of the value
+// Store the previous discard bias, so we can test for direction
+F32 LLViewerTexture::sPreviousDesiredDiscardBias = 1.f;
+// </FS:minerjr>
 
 S32 LLViewerTexture::sMaxSculptRez = 128; //max sculpt image size
 constexpr S32 MAX_CACHED_RAW_IMAGE_AREA = 64 * 64;
@@ -506,7 +511,10 @@ void LLViewerTexture::updateClass()
     {
         tester->update();
     }
-
+    // <FS:minerjr>
+    // Store the current bias before it is modified.
+    sPreviousDesiredDiscardBias = sDesiredDiscardBias;
+    // </FS:minerjr>
     LLViewerMediaTexture::updateClass();
 
     static LLCachedControl<U32> max_vram_budget(gSavedSettings, "RenderMaxVRAMBudget", 0);
@@ -2062,7 +2070,7 @@ bool LLViewerFetchedTexture::updateFetch()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     static LLCachedControl<bool> textures_decode_disabled(gSavedSettings,"TextureDecodeDisabled", false);
-
+    static LLCachedControl<bool> use_static_vector(gSavedSettings,"FSTestStaticVector", false) ;
     if(textures_decode_disabled) // don't fetch the surface textures in wireframe mode
     {
         return false;
@@ -2206,7 +2214,7 @@ bool LLViewerFetchedTexture::updateFetch()
         // <FS:minerjr>
         // Track if we need to do a fetch
         // Check if we have the desired texture on the raw iamge list
-        if (desired_discard < mRawImages.size() && mRawImages[desired_discard].notNull())
+        if (desired_discard < mRawImages.size() && mRawImages[desired_discard].notNull() && use_static_vector)
         {
             // If we do, and the current request does not need an aux, or if there is a need for
             // and aux texture and we have it, then 
@@ -2258,7 +2266,7 @@ bool LLViewerFetchedTexture::updateFetch()
             mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
                                                        mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
         }        
-        else if (fetch_request_response <= LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
+        else if (use_static_vector && fetch_request_response <= LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
         {
             // We add to the fetch response for the errror transition, what the desired discard was.
             // So we take the difference between the base -4 value and - (-4 - desired discard)
@@ -2287,7 +2295,8 @@ bool LLViewerFetchedTexture::updateFetch()
            
             processFetchResults(desired_discard, current_discard, fetch_request_response, decode_priority);
         }
-        /*
+        if (!use_static_vector && fetch_request_response <= LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
+        {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - processing transition error");
             // Request wasn't created because similar one finished or is in a transitional state, check worker state
             // As an example can happen if an image (like a server bake always fetches at dis 0), was scaled down to
@@ -2313,7 +2322,7 @@ bool LLViewerFetchedTexture::updateFetch()
                 processFetchResults(desired_discard, current_discard, decoded_discard, decode_priority);
             }
         }
-        */
+        
         // If createRequest() failed, that means one of two things:
         // 1. We're finishing up a request for this UUID, so we
         //    should wait for it to complete

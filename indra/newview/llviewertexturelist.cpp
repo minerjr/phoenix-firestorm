@@ -1224,7 +1224,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
     update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
-    if (LLViewerTexture::sDesiredDiscardBias > 1.f && !use_static_vector)
+    if (LLViewerTexture::sDesiredDiscardBias > 1.f && !use_static_vector || (use_static_vector && LLViewerTexture::sDesiredDiscardBias > LLViewerTexture::sPreviousDesiredDiscardBias))
     {
         // we are over memory target, update more agresively
         update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
