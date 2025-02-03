@@ -1037,6 +1037,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // still referenced outside of image list, reset timer
         imagep->getLastReferencedTimer()->reset();
 
+        if (imagep->tryToClearRawImages())
+        {
+
+        }
+
         if (imagep->hasSavedRawImage())
         {
             if (imagep->getElapsedLastReferencedSavedRawImageTime() > max_inactive_time)
