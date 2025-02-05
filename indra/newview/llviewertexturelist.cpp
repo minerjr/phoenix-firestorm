@@ -360,7 +360,7 @@ void LLViewerTextureList::shutdown()
     // Flush all of the references
     while (!mCreateTextureList.empty())
     {
-        mCreateTextureList.front()->mCreatePending = false;
+        mCreateTextureList.front()->setCreatePending(false);
         mCreateTextureList.pop();
     }
     mFastCacheList.clear();
@@ -901,7 +901,7 @@ extern bool gCubeSnapshot;
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
 {
     llassert(!gCubeSnapshot);
-
+    
     if (imagep->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)  // don't bother checking face list for boosted textures
     {
         static LLCachedControl<F32> texture_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.04f);
@@ -996,7 +996,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         imagep->addTextureStats(max_vsize);
     }
-
+    
 #if 0
     imagep->setDebugText(llformat("%d/%d - %d/%d -- %d/%d",
         (S32)sqrtf(max_vsize),
@@ -1037,6 +1037,17 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // still referenced outside of image list, reset timer
         imagep->getLastReferencedTimer()->reset();
 
+        // <FS:minerjr>
+        // Try to clear the raw images that were built up
+        imagep->tryToClearRawImages();
+        /*
+        if (imagep->tryToClearRawImages())
+        {
+            // Succeceded (This is just to see if it cleared.
+            //LL_INFOS() << "Image  " << imagep->getID() << " just cleared it's Raw buffers" << LL_ENDL ;
+        }
+        */
+        // </FS:minerjr>
         if (imagep->hasSavedRawImage())
         {
             if (imagep->getElapsedLastReferencedSavedRawImageTime() > max_inactive_time)
@@ -1078,7 +1089,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
     while (!mCreateTextureList.empty())
     {
         LLViewerFetchedTexture* imagep = mCreateTextureList.front();
-        llassert(imagep->mCreatePending);
+        llassert(imagep->getCreatePending());
 
         // desired discard may change while an image is being decoded. If the texture in VRAM is sufficient
         // for the current desired discard level, skip the texture creation.  This happens more often than it probably
@@ -1091,7 +1102,7 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
         }
 
         imagep->postCreateTexture();
-        imagep->mCreatePending = false;
+        imagep->setCreatePending(false);
         mCreateTextureList.pop();
 
         if (imagep->hasGLTexture() && imagep->getDiscardLevel() < imagep->getDesiredDiscardLevel())

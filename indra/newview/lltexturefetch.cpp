@@ -3805,13 +3805,12 @@ S32 LLTextureFetch::getFetchState(const LLUUID& id)
 }
 
 // Threads:  T*
-S32 LLTextureFetch::getFetchState(const LLUUID& id, F32& data_progress_p, F32& requested_priority_p,
-                                  U32& fetch_priority_p, F32& fetch_dtime_p, F32& request_dtime_p, bool& can_use_http)
+S32 LLTextureFetch::getFetchState(const LLUUID& id, FetchTextureFlagData& fetchTextureData, F32& fetch_dtime_p, F32& request_dtime_p)
 {
     LL_PROFILE_ZONE_SCOPED;
     S32 state = LLTextureFetchWorker::INVALID;
     F32 data_progress = 0.0f;
-    F32 requested_priority = 0.0f;
+    U32 requested_priority = 0;
     F32 fetch_dtime = 999999.f;
     F32 request_dtime = 999999.f;
     U32 fetch_priority = 0;
@@ -3820,6 +3819,7 @@ S32 LLTextureFetch::getFetchState(const LLUUID& id, F32& data_progress_p, F32& r
     if (worker && worker->haveWork())
     {
         worker->lockWorkMutex();                                        // +Mw
+
         state = worker->mState;
         fetch_dtime = worker->mFetchDeltaTimer.getElapsedTimeF32();
         request_dtime = worker->mRequestedDeltaTimer.getElapsedTimeF32();
@@ -3841,19 +3841,19 @@ S32 LLTextureFetch::getFetchState(const LLUUID& id, F32& data_progress_p, F32& r
         }
         if (state >= LLTextureFetchWorker::LOAD_FROM_NETWORK && state <= LLTextureFetchWorker::WAIT_HTTP_REQ)
         {
-            requested_priority = worker->mRequestedPriority;
+            requested_priority = (U64)(15.0f * worker->mRequestedPriority);
         }
         else
         {
-            requested_priority = worker->mImagePriority;
+            requested_priority = (U64)(15.0f * worker->mImagePriority);
         }
         fetch_priority = (U32)worker->getImagePriority();
-        can_use_http = worker->getCanUseHTTP() ;
+        fetchTextureData.Flags.mCanUseHTTP = worker->getCanUseHTTP() ;
         worker->unlockWorkMutex();                                      // -Mw
     }
-    data_progress_p = data_progress;
-    requested_priority_p = requested_priority;
-    fetch_priority_p = fetch_priority;
+    fetchTextureData.Flags.mDownloadProgress = (U64)(15.0f * data_progress);
+    fetchTextureData.Flags.mRequestedDownloadPriority = requested_priority;
+    fetchTextureData.Flags.mFetchPriority = fetch_priority;
     fetch_dtime_p = fetch_dtime;
     request_dtime_p = request_dtime;
     return state;
@@ -3895,7 +3895,29 @@ S32 LLTextureFetch::getLastRawImage(const LLUUID& id,
     }
     return decoded_discard;
 }
-
+// <FS:minerjr>
+// Combine the two methods above into a single command so that there is only 1 thread lock per request
+// instead of 2.
+S32 LLTextureFetch::getLastFetchState(const LLUUID& id, S32& requested_discard, S32& decoded_discard, bool& decoded, LLPointer<LLImageRaw>& raw, LLPointer<LLImageRaw>& aux)
+{
+    LL_PROFILE_ZONE_SCOPED;
+    S32 state = LLTextureFetchWorker::INVALID;
+    decoded_discard = -1;
+    LLTextureFetchWorker* worker = getWorker(id);
+    if (worker && !worker->haveWork() && worker->mDecodedDiscard >= 0)
+    {
+        worker->lockWorkMutex();                                        // +Mw
+        state = worker->mState;
+        requested_discard = worker->mDesiredDiscard;
+        decoded_discard = worker->mDecodedDiscard;
+        decoded = worker->mDecoded;
+        raw = worker->mRawImage;
+        aux = worker->mAuxImage;
+        worker->unlockWorkMutex();                                      // -Mw
+    }
+    return state;
+}
+// <FS:minerjr>
 void LLTextureFetch::dump()
 {
     LL_INFOS(LOG_TXT) << "LLTextureFetch ACTIVE_HTTP:" << LL_ENDL;

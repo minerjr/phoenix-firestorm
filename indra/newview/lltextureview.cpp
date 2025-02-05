@@ -202,8 +202,8 @@ void LLTextureBar::draw()
     tex_str = llformat("%s %7.0f %d(%d)",
         uuid_str.c_str(),
         mImagep->mMaxVirtualSize,
-        mImagep->mDesiredDiscardLevel,
-        mImagep->mRequestedDiscardLevel);
+        mImagep->mFetchFlags.Flags.mDesiredDiscardLevel,
+        mImagep->mFetchFlags.Flags.mRequestedDiscardLevel);
 
 
     LLFontGL::getFontMonospace()->renderUTF8(tex_str, 0, title_x1, getRect().getHeight(),
@@ -241,11 +241,11 @@ void LLTextureBar::draw()
     const S32 fetch_state_desc_size = (S32)LL_ARRAY_SIZE(fetch_state_desc);
     S32 state =
         mImagep->mNeedsCreateTexture ? LAST_STATE+1 :
-        mImagep->mFullyLoaded ? LAST_STATE+2 :
-        mImagep->mMinDiscardLevel > 0 ? LAST_STATE+3 :
-        mImagep->mIsMissingAsset ? LAST_STATE+4 :
-        !mImagep->mIsFetching ? LAST_STATE+5 :
-        mImagep->mFetchState;
+        mImagep->getFullyLoaded() ? LAST_STATE+2 :
+        mImagep->getMinDiscardLevel() > 0 ? LAST_STATE+3 :
+        mImagep->getIsMissingAsset() ? LAST_STATE+4 :
+        !mImagep->getIsFetching() ? LAST_STATE+5 :
+        mImagep->getFetchState();
     state = llclamp(state,0,fetch_state_desc_size-1);
 
     LLFontGL::getFontMonospace()->renderUTF8(fetch_state_desc[state].desc, 0, title_x2, getRect().getHeight(),
@@ -262,7 +262,7 @@ void LLTextureBar::draw()
     gGL.color4f(0.f, 0.f, 0.f, 0.75f);
     gl_rect_2d(left, top, right, bottom);
 
-    F32 data_progress = mImagep->mDownloadProgress;
+    F32 data_progress = (F32)mImagep->mFetchFlags.Flags.mDownloadProgress * 0.06666f;
 
     if (data_progress > 0.0f)
     {
@@ -951,7 +951,7 @@ void LLTextureView::draw()
             }
 
             S32 cur_discard = imagep->getDiscardLevel();
-            S32 desired_discard = imagep->mDesiredDiscardLevel;
+            S32 desired_discard = imagep->mFetchFlags.Flags.mDesiredDiscardLevel;
 
             if (mPrintList)
             {
@@ -975,7 +975,7 @@ void LLTextureView::draw()
             F32 pri;
             if (mOrderFetch)
             {
-                pri = ((F32)imagep->mFetchPriority)/256.f;
+                pri = ((F32)imagep->mFetchFlags.Flags.mFetchPriority);// / 256.f;
             }
             else
             {

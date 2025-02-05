@@ -45,7 +45,7 @@
 // <FS:Ansariel> Max texture resolution
 extern U32 DESIRED_NORMAL_TEXTURE_SIZE;
 constexpr F32 MIN_VRAM_BUDGET = 768.f; // <FS:Ansariel> Expose max texture VRAM setting
-
+//constexpr S32 RAW_DISCARD_CHECK_MASK = 
 class LLFace;
 class LLImageGL ;
 class LLImageRaw;
@@ -254,16 +254,73 @@ public:
 
 
 enum FTType
-{
-    FTT_UNKNOWN = -1,
+{    
     FTT_DEFAULT = 0, // standard texture fetched by id.
     FTT_SERVER_BAKE, // texture produced by appearance service and fetched from there.
     FTT_HOST_BAKE, // old-style baked texture uploaded by viewer and fetched from avatar's host.
     FTT_MAP_TILE, // tiles are fetched from map server directly.
-    FTT_LOCAL_FILE // fetch directly from a local file.
+    FTT_LOCAL_FILE, // fetch directly from a local file.
+    FTT_UNKNOWN = 6
 };
 
 const std::string& fttype_to_string(const FTType& fttype);
+
+// <FS:minerjr>
+// Store the values and flags of the data packed into U64 unions
+typedef union FetchTextureFlagData
+{
+    U64 Raw;
+    struct
+    {
+        U64 mRequestedDiscardLevel : 3;
+        U64 mRequestedDownloadPriority : 4;
+        U64 mFetchState : 4;
+        U64 mFetchPriority : 5;
+        U64 mDownloadProgress : 4;
+
+        U64 mMinDiscardLevel : 3;
+        U64 mDesiredDiscardLevel : 3;
+        U64 mMinDesiredDiscardLevel : 3;
+        U64 mLoadedCallbackDesiredDiscardLevel : 3;
+        U64 mRawDiscardLevel : 3;
+        U64 mSavedRawDiscardLevel : 3;
+        U64 mDesiredSavedRawDiscardLevel : 3;
+        U64 mFTType : 3;
+
+        U64 mKnownDrawSizeChanged : 1;
+        U64 mNeedsAux : 1;
+        U64 mHasAux : 1;
+        U64 mDecodingAux : 1;
+        U64 mIsRawImageValid : 1;
+        U64 mHasFetcher : 1;
+        U64 mIsFetching : 1;
+        U64 mCanUseHTTP : 1;
+        U64 mIsMissingAsset : 1;
+        U64 mInImageList : 1;
+        U64 mForSculpt : 1;
+        U64 mIsFetched : 1;
+        U64 mCreatePending : 1;
+        U64 mForceToSaveRawImage : 1;
+        U64 mSaveRawImage : 1;
+        U64 mFullyLoaded : 1;
+        U64 mInFastCacheList : 1;
+        U64 mForceCallbackFetch : 1;
+        U64 mPauseLoadedCallBacks : 1;
+    } Flags;
+} FetchTextureFlagData_u;
+
+typedef union FetchTextureSizeData
+{
+    U64 Raw;
+    struct
+    {
+        U64 mOrigWidth : 13;
+        U64 mOrigHeight : 13;
+        U64 mKnownDrawWidth : 13;
+        U64 mKnownDrawHeight : 13;
+    } Sizes;
+} FetchTextureSizeData_u;
+// </FS:minerjr>
 
 //
 //textures are managed in gTextureList.
@@ -277,6 +334,10 @@ class LLViewerFetchedTexture : public LLViewerTexture
 
 protected:
     /*virtual*/ ~LLViewerFetchedTexture();
+    // </FS:minerjr>
+    FetchTextureFlagData mFetchFlags;
+    FetchTextureSizeData mFetchSizes;
+    // </FS:minerjr
 public:
     LLViewerFetchedTexture(const LLUUID& id, FTType f_type, const LLHost& host = LLHost(), bool usemipmaps = true);
     LLViewerFetchedTexture(const LLImageRaw* raw, FTType f_type, bool usemipmaps);
@@ -354,8 +415,8 @@ public:
     void destroyTexture() ;
 
     virtual void processTextureStats() ;
-
-    bool needsAux() const { return mNeedsAux; }
+    
+    bool needsAux() const { return mFetchFlags.Flags.mNeedsAux; }
 
     // Host we think might have this image, used for baked av textures.
     void setTargetHost(LLHost host)         { mTargetHost = host; }
@@ -363,8 +424,8 @@ public:
 
     void updateVirtualSize() ;
 
-    S32  getDesiredDiscardLevel()            { return mDesiredDiscardLevel; }
-    void setMinDiscardLevel(S32 discard)    { mMinDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel,(S8)discard); }
+    S32  getDesiredDiscardLevel()            { return mFetchFlags.Flags.mDesiredDiscardLevel; }
+    void setMinDiscardLevel(S32 discard)    { mFetchFlags.Flags.mMinDesiredDiscardLevel = llmin(mFetchFlags.Flags.mMinDesiredDiscardLevel,(S8)discard); }
 
     void setBoostLevel(S32 level) override;
     bool updateFetch();
@@ -385,16 +446,16 @@ public:
 
     // returns dimensions of original image for local files (before power of two scaling)
     // and returns 0 for all asset system images
-    S32 getOriginalWidth() { return mOrigWidth; }
-    S32 getOriginalHeight() { return mOrigHeight; }
+    S32 getOriginalWidth() { return mFetchSizes.Sizes.mOrigWidth; }
+    S32 getOriginalHeight() { return mFetchSizes.Sizes.mOrigHeight; }
 
-    bool isInImageList() const {return mInImageList ;}
-    void setInImageList(bool flag) {mInImageList = flag ;}
+    bool isInImageList() const {return mFetchFlags.Flags.mInImageList ;}
+    void setInImageList(bool flag) {mFetchFlags.Flags.mInImageList = flag ;}
 
     LLFrameTimer* getLastPacketTimer() {return &mLastPacketTimer;}
 
-    U32 getFetchPriority() const { return mFetchPriority ;}
-    F32 getDownloadProgress() const {return mDownloadProgress ;}
+    U32 getFetchPriority() const { return mFetchFlags.Flags.mFetchPriority ;}
+    U64 getDownloadProgress() const {return mFetchFlags.Flags.mDownloadProgress ;}
 
     void destroyRawImage();
     bool needsToSaveRawImage();
@@ -406,21 +467,21 @@ public:
     //---------------
 
     void setForSculpt();
-    bool forSculpt() const {return mForSculpt;}
+    bool forSculpt() const {return mFetchFlags.Flags.mForSculpt;}
     bool isForSculptOnly() const;
 
     //raw image management
     LLImageRaw* getRawImage()const { return mRawImage ;}
     S32         getRawImageLevel() const {return mRawDiscardLevel;}
-    bool        isRawImageValid()const { return mIsRawImageValid ; }
+    bool        isRawImageValid()const { return mFetchFlags.Flags.mIsRawImageValid ; }
     void        forceToSaveRawImage(S32 desired_discard = 0, F32 kept_time = 0.f) ;
-
+    bool        tryToClearRawImages();
     // readback the raw image from OpenGL if mRawImage is not valid
     void        readbackRawImage();
 
     void        destroySavedRawImage() ;
     LLImageRaw* getSavedRawImage() ;
-    S32         getSavedRawImageLevel() const {return mSavedRawDiscardLevel; }
+    S32         getSavedRawImageLevel() const {return mFetchFlags.Flags.mSavedRawDiscardLevel; }
 
     const LLImageRaw* getSavedRawImage() const;
     const LLImageRaw* getAuxRawImage() const { return mAuxRawImage; }
@@ -428,20 +489,27 @@ public:
     F32         getElapsedLastReferencedSavedRawImageTime() const ;
     bool        isFullyLoaded() const;
 
-    bool        hasFetcher() const { return mHasFetcher;}
-    bool        isFetching() const { return mIsFetching;}
-    void        setCanUseHTTP(bool can_use_http) {mCanUseHTTP = can_use_http;}
+    bool        hasFetcher() const { return mFetchFlags.Flags.mHasFetcher;}
+    bool        isFetching() const { return mFetchFlags.Flags.mIsFetching;}
+    void        setCanUseHTTP(bool can_use_http) {mFetchFlags.Flags.mCanUseHTTP = can_use_http;}
 
     void        forceToDeleteRequest();
     void        loadFromFastCache();
-    void        setInFastCacheList(bool in_list) { mInFastCacheList = in_list; }
-    bool        isInFastCacheList() { return mInFastCacheList; }
+    void        setInFastCacheList(bool in_list) { mFetchFlags.Flags.mInFastCacheList = in_list; }
+    bool        isInFastCacheList() { return mFetchFlags.Flags.mInFastCacheList; }
 
     /*virtual*/bool  isActiveFetching() override; //is actively in fetching by the fetching pipeline.
 
     virtual bool scaleDown() { return false; };
-
-    bool mCreatePending = false;    // if true, this is in gTextureList.mCreateTextureList
+    bool getCreatePending() { return mFetchFlags.Flags.mCreatePending; }
+    void setCreatePending(bool newValue) { mFetchFlags.Flags.mCreatePending = newValue; }
+    bool getFullyLoaded() { return mFetchFlags.Flags.mFullyLoaded; }
+    S32 getMinDiscardLevel() { return mFetchFlags.Flags.mMinDiscardLevel; }
+    bool getIsFetching() { return mFetchFlags.Flags.mIsFetching; }
+    bool getIsMissingAsset() { return mFetchFlags.Flags.mIsMissingAsset; }
+    bool getFetchState() { return mFetchFlags.Flags.mFetchState; }
+    
+    //bool mCreatePending = false;    // if true, this is in gTextureList.mCreateTextureList
     mutable bool mDownScalePending = false; // if true, this is in gTextureList.mDownScaleQueue
 
     // <FS:Techwolf Lupindo> texture comment decoder
@@ -462,65 +530,75 @@ private:
     void saveRawImage() ;
 
 private:
-    bool  mFullyLoaded;
-    bool  mInFastCacheList;
-    bool  mForceCallbackFetch;
+    //bool  mFullyLoaded;
+    //bool  mInFastCacheList;
+    //bool  mForceCallbackFetch;
 
 protected:
-    S32 mOrigWidth;
-    S32 mOrigHeight;
+
+    //S32 mOrigWidth;
+    //S32 mOrigHeight;
 
     // Override the computation of discard levels if we know the exact output size of the image.
     // Used for UI textures to not decode, even if we have more data.
-    S32 mKnownDrawWidth;
-    S32 mKnownDrawHeight;
-    bool mKnownDrawSizeChanged ;
+    //S32 mKnownDrawWidth;
+    //S32 mKnownDrawHeight;
+    //bool mKnownDrawSizeChanged ;
     std::string mUrl;
 
-    S32 mRequestedDiscardLevel;
-    F32 mRequestedDownloadPriority;
-    S32 mFetchState;
-    S32 mLastFetchState = -1; // DEBUG
-    U32 mFetchPriority;
-    F32 mDownloadProgress;
+    //S32 mRequestedDiscardLevel;
+    //F32 mRequestedDownloadPriority;
+    //S32 mFetchState;
+    //S32 mLastFetchState = -1; // DEBUG
+   // U32 mFetchPriority;
+    //F32 mDownloadProgress;
     F32 mFetchDeltaTime;
     F32 mRequestDeltaTime;
-    S32 mMinDiscardLevel;
-    S8  mDesiredDiscardLevel;           // The discard level we'd LIKE to have - if we have it and there's space
-    S8  mMinDesiredDiscardLevel;    // The minimum discard level we'd like to have
+    //S32 mMinDiscardLevel;
+    //S8  mDesiredDiscardLevel;           // The discard level we'd LIKE to have - if we have it and there's space
+    //S8  mMinDesiredDiscardLevel;    // The minimum discard level we'd like to have
 
-    bool mNeedsAux;                 // We need to decode the auxiliary channels
-    bool mHasAux;                    // We have aux channels
-    bool mDecodingAux;              // Are we decoding high components
-    bool mIsRawImageValid;
-    bool mHasFetcher;               // We've made a fecth request
-    bool mIsFetching;               // Fetch request is active
-    bool mCanUseHTTP;              //This texture can be fetched through http if true.
+    //bool mNeedsAux;                 // We need to decode the auxiliary channels
+    //bool mHasAux;                    // We have aux channels
+    //bool mDecodingAux;              // Are we decoding high components
+    //bool mIsRawImageValid;
+    //bool mHasFetcher;               // We've made a fecth request
+    //bool mIsFetching;               // Fetch request is active
+   // bool mCanUseHTTP;              //This texture can be fetched through http if true.
     LLCore::HttpStatus mLastHttpGetStatus; // Result of the most recently completed http request for this texture.
 
-    FTType mFTType; // What category of image is this - map tile, server bake, etc?
+    //FTType mFTType; // What category of image is this - map tile, server bake, etc?
     mutable bool mIsMissingAsset;       // True if we know that there is no image asset with this image id in the database.
 
     typedef std::list<LLLoadedCallbackEntry*> callback_list_t;
-    S8              mLoadedCallbackDesiredDiscardLevel;
-    bool            mPauseLoadedCallBacks;
+    //S8              mLoadedCallbackDesiredDiscardLevel;
+    //bool            mPauseLoadedCallBacks;
     callback_list_t mLoadedCallbackList;
     F32             mLastCallBackActiveTime;
 
     LLPointer<LLImageRaw> mRawImage;
+    // <FS:minerjr>    
+    // Replace the single raw iamge with a array of raw iamges (Sized to MAX_DISCARD_LEVEL)
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mRawImages;
+
+    F32 mLastRawImageAccess;
+    // </FS:minerjr>
     S32 mRawDiscardLevel = -1;
 
     // Used ONLY for cloth meshes right now.  Make SURE you know what you're
     // doing if you use it for anything else! - djs
     LLPointer<LLImageRaw> mAuxRawImage;
+    // Replace the raw aux image with a array of raw images (Sized to the MAX_DISCARD_LEVEL)    
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mAuxRawImages;
+    // </FS:minerjr>
 
     //keep a copy of mRawImage for some special purposes
     //when mForceToSaveRawImage is set.
-    bool mForceToSaveRawImage ;
-    bool mSaveRawImage;
+    //bool mForceToSaveRawImage ;
+    //bool mSaveRawImage;
     LLPointer<LLImageRaw> mSavedRawImage;
-    S32 mSavedRawDiscardLevel;
-    S32 mDesiredSavedRawDiscardLevel;
+    //S32 mSavedRawDiscardLevel;
+    //S32 mDesiredSavedRawDiscardLevel;
     F32 mLastReferencedSavedRawImageTime ;
     F32 mKeptSavedRawImageTime ;
 
@@ -530,13 +608,13 @@ protected:
     LLFrameTimer mLastPacketTimer;      // Time since last packet.
     LLFrameTimer mStopFetchingTimer;    // Time since mDecodePriority == 0.f.
 
-    bool  mInImageList;             // true if image is in list (in which case don't reset priority!)
+    //bool  mInImageList;             // true if image is in list (in which case don't reset priority!)
     // This needs to be atomic, since it is written both in the main thread
     // and in the GL image worker thread... HB
     LLAtomicBool  mNeedsCreateTexture;
 
-    bool   mForSculpt ; //a flag if the texture is used as sculpt data.
-    bool   mIsFetched ; //is loaded from remote or from cache, not generated locally.
+    //bool   mForSculpt ; //a flag if the texture is used as sculpt data.
+    //bool   mIsFetched ; //is loaded from remote or from cache, not generated locally.
 
 public:
     static F32 sMaxVirtualSize; //maximum possible value of mMaxVirtualSize
@@ -581,7 +659,7 @@ private:
 
 private:
     F32 mDiscardVirtualSize;        // Virtual size used to calculate desired discard
-    F32 mCalculatedDiscardLevel;    // Last calculated discard level
+    //F32 mCalculatedDiscardLevel;    // Last calculated discard level
 };
 
 //

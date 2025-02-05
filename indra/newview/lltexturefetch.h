@@ -133,13 +133,16 @@ public:
     // @return  Fetch state of an active given image and associates statistics
     //          See also getStateString
     // Threads:  T*
-    S32 getFetchState(const LLUUID& id, F32& decode_progress_p, F32& requested_priority_p,
-                      U32& fetch_priority_p, F32& fetch_dtime_p, F32& request_dtime_p, bool& can_use_http);
+    S32 getFetchState(const LLUUID& id, FetchTextureFlagData& fetchTextureData, F32& fetch_dtime_p, F32& request_dtime_p);
 
     // @return  Fetch last state of given image
     // Threads:  T*
     S32 getLastFetchState(const LLUUID& id, S32& requested_discard, S32 &decoded_discard, bool &decoded);
 
+    // <FS:minerjr>
+    // Replaces the two above commands with a single one to reduce the number of mutex locks by 1.. this is causing issues. and will be replaced soon
+    S32 getLastFetchState(const LLUUID& id, S32& requested_discard, S32& decoded_discard, bool& decoded, LLPointer<LLImageRaw>& raw, LLPointer<LLImageRaw>& aux);
+    // </FS:minerjr>
     // @return  Fetch last raw image
     // Threads:  T*
     S32 getLastRawImage(const LLUUID& id, LLPointer<LLImageRaw>& raw, LLPointer<LLImageRaw>& aux);

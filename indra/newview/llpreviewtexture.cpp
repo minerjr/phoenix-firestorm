@@ -333,7 +333,7 @@ void LLPreviewTexture::draw()
                     LLFontGL::NORMAL,
                     LLFontGL::DROP_SHADOW);
 
-                F32 data_progress = mImage->getDownloadProgress() ;
+                U64 data_progress = mImage->getDownloadProgress() ;
 
                 // Draw the progress bar.
                 const S32 BAR_HEIGHT = 12;
