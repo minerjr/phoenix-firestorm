@@ -510,7 +510,7 @@ void LLViewerTexture::updateClass()
     LLViewerMediaTexture::updateClass();
 
     static LLCachedControl<U32> max_vram_budget(gSavedSettings, "RenderMaxVRAMBudget", 0);
-    static LLCachedControl<bool> max_vram_budget_enabled(gSavedSettings, "FSLimitTextureVRAMUsage"); // <FS:Ansariel> Expose max texture VRAM setting
+    static LLCachedControl<bool> max_vram_budget_enabled(gSavedSettings, "FSLimitTextureVRAMUsage", false); // <FS:Ansariel> Expose max texture VRAM setting
 
     F64 texture_bytes_alloc = LLImageGL::getTextureBytesAllocated() / 1024.0 / 512.0;
     F64 vertex_bytes_alloc = LLVertexBuffer::getBytesAllocated() / 1024.0 / 512.0;
@@ -1235,7 +1235,9 @@ void LLViewerFetchedTexture::loadFromFastCache()
         return; //no need to access the fast cache.
     }
     mInFastCacheList = false;
-
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    // </FS:minerjr> [FIRE-35011]
     add(LLTextureFetch::sCacheAttempt, 1.0);
 
     LLTimer fastCacheTimer;
@@ -1288,6 +1290,32 @@ void LLViewerFetchedTexture::loadFromFastCache()
 
             mRequestedDiscardLevel = mDesiredDiscardLevel + 1;
             mIsRawImageValid = true;
+
+            // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+            // Make sure that the raw discard is valid
+            if (fs_performance_additions >= 2 && mIsRawImageValid == true)
+            {
+                // If the raw is OK, but not the same as what is requried, still save it
+                // Track the last time the raw images were updated
+                mLastRawImageAccess = sCurrentTime;
+                // If there is not current saved raw and there is a decoded one
+                if (mRawImages[mRawDiscardLevel].isNull() && mRawImage.notNull())
+                {
+                    // Increase the raw count by 1 as we are keeping it in RAM
+                    sRawCount++;
+                    // Store the generated fetch raw data        
+                    mRawImages[mRawDiscardLevel] = mRawImage;
+                }
+                // If there is aux raw image and there is no saved Aux texture, then
+                if (mHasAux && mAuxRawImages[mRawDiscardLevel].isNull() && mAuxRawImage.notNull())
+                {
+                    // Increase the count of Aux Raw image by 1
+                    sAuxCount++;
+                    // And store the decoded Aux texture
+                    mAuxRawImages[mRawDiscardLevel] = mAuxRawImage;
+                }
+            }
+            // <FS:minerjr> [FIRE-35011]
             addToCreateTexture();
         }
     }
@@ -1416,7 +1444,7 @@ void LLViewerFetchedTexture::addToCreateTexture()
     {
         // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
         // Make sure that the raw discard is valid
-        if (fs_performance_additions >= 2 && mRawDiscardLevel < MAX_DISCARD_LEVEL)
+        if (fs_performance_additions >= 2 && mRawDiscardLevel <= MAX_DISCARD_LEVEL)
         {
             // If the raw is OK, but not the same as what is requried, still save it
             // Track the last time the raw images were updated
@@ -2860,13 +2888,13 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
     // Search if we have a better raw image already
     S32 foundRawIndex = 0;
     // Loop while the current index is below the limit
-    for (; foundRawIndex < MAX_DISCARD_LEVEL; foundRawIndex++)
+    for (; foundRawIndex <= MAX_DISCARD_LEVEL; foundRawIndex++)
     {
         // Break out of the loop at the first image we find
         if (mRawImages[foundRawIndex].notNull()) break;
     }
     // If the raw is not valid or is the raw is valid, and is not as good a quality 
-    if ((!mIsRawImageValid || foundRawIndex < mRawDiscardLevel) && foundRawIndex >= 0 && foundRawIndex < MAX_DISCARD_LEVEL)
+    if ((!mIsRawImageValid || foundRawIndex < mRawDiscardLevel) && foundRawIndex >= 0 && foundRawIndex <= MAX_DISCARD_LEVEL)
     {
         current_raw_discard = foundRawIndex;
         best_raw_discard = llmin(best_raw_discard, foundRawIndex);
@@ -3210,7 +3238,7 @@ bool LLViewerFetchedTexture::tryToClearRawImages()
     if (mLastRawImageAccess != 0.0f && sCurrentTime - mLastRawImageAccess > 30.0f)
     {
         // Loop over all of the images and set them to null.
-        for (S32 index = 0; index < MAX_DISCARD_LEVEL; index++)
+        for (S32 index = 0; index <= MAX_DISCARD_LEVEL - 2; index++)
         {
             // Could do validation of the number of raw images
             if (mRawImages[index].notNull())

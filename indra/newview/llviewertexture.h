@@ -514,11 +514,11 @@ protected:
     LLPointer<LLImageRaw> mRawImage;
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card  
     // Replace the single raw iamge with a array of raw iamges (Sized to MAX_DISCARD_LEVEL)
-    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mRawImages;
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL + 2> mRawImages;
     // Store the last time a Raw image was accessed
     F32 mLastRawImageAccess;
     // Replace the raw aux image with a array of raw images (Sized to the MAX_DISCARD_LEVEL)    
-    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL> mAuxRawImages;
+    std::array<LLPointer<LLImageRaw>, MAX_DISCARD_LEVEL + 2> mAuxRawImages;
     // </FS:minerjr> [FIRE-35011]
     S32 mRawDiscardLevel = -1;
 
