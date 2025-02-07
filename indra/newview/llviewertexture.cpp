@@ -1190,6 +1190,13 @@ LLViewerFetchedTexture::~LLViewerFetchedTexture()
     {
         LLAppViewer::getTextureFetch()->deleteRequest(getID(), true);
     }
+
+    // Clear the 2 arrays of raw textures
+    for (int index = 0; index < mRawImages.size(); index++)
+    {
+        mRawImages[index] = nullptr;
+        mAuxRawImages[index] = nullptr;
+    }
     cleanup();
 }
 
