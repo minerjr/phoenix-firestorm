@@ -109,7 +109,17 @@ public:
     friend bool operator!=( const LLHost &lhs, const LLHost &rhs );
     friend bool operator<(const LLHost &lhs, const LLHost &rhs);
 };
-
+// <FS:minerjr>
+// Needed to add custom hash function 
+template <>
+struct std::hash<LLHost>
+{
+    std::size_t operator()( const LLHost& k ) const
+    {        
+        return k.hash();
+    }
+};
+// </FS:minerjr>
 
 // Function Object required for STL templates using LLHost as key
 class LLHostHash

@@ -59,6 +59,11 @@ private:
 #ifdef LL_WINDOWS
 typedef LLAtomicBase<U32, std::atomic_uint32_t> LLAtomicU32;
 typedef LLAtomicBase<S32, std::atomic_int32_t> LLAtomicS32;
+// <FS:minerjr>
+// Added 64bit atomic values
+typedef LLAtomicBase<U64, std::atomic_uint64_t> LLAtomicU64;
+typedef LLAtomicBase<S64, std::atomic_int64_t> LLAtomicS64;
+// <FS:minerjr>
 #else
 typedef LLAtomicBase<U32, std::atomic_uint> LLAtomicU32;
 typedef LLAtomicBase<S32, std::atomic_int> LLAtomicS32;

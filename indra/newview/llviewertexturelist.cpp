@@ -104,6 +104,10 @@ LLViewerTextureList::LLViewerTextureList()
 void LLViewerTextureList::init()
 {
     mInitialized = true ;
+    // <FS:minerjr>
+    // Reserve the entries vector to prevent re-allocation every frame
+    mTextureEntriesToProcess.reserve(MAX_NUMBER_OF_BIAS_TEXTURES);
+    // </FS:minerjr>
     sNumImages = 0;
     doPreloadImages();
 }
@@ -678,7 +682,8 @@ LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
     // </FS:Ansariel>
     return imagep ;
 }
-
+// <FS:minerjr>
+/*
 void LLViewerTextureList::findTexturesByID(const LLUUID &image_id, std::vector<LLViewerFetchedTexture*> &output)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -690,7 +695,25 @@ void LLViewerTextureList::findTexturesByID(const LLUUID &image_id, std::vector<L
         iter++;
     }
 }
-
+*/
+void LLViewerTextureList::findTexturesByID(const LLUUID &image_id, std::vector<LLViewerFetchedTexture*> &output)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    // Create the 2 search keys    
+    LLTextureKey search_key1(image_id, TEX_LIST_STANDARD);
+    LLTextureKey search_key2(image_id, TEX_LIST_SCALE);
+    uuid_map_t::iterator iter = mUUIDMap.find(search_key1);
+    if (iter != mUUIDMap.end())
+    {
+        output.push_back(iter->second);
+    }
+    iter = mUUIDMap.find(search_key2);
+    if (iter != mUUIDMap.end())
+    {
+        output.push_back(iter->second);
+    }
+}
+// <FS:minerjr>
 LLViewerFetchedTexture *LLViewerTextureList::findImage(const LLTextureKey &search_key)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1212,66 +1235,149 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-
-    typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
-    entries_list_t entries;
-
-    // update N textures at beginning of mImageList
-    U32 update_count = 0;
-    static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32
-
-    // NOTE:  a texture may be deleted as a side effect of some of these updates
-    // Deletion rules check ref count, so be careful not to hold any LLPointer references to the textures here other than the one in entries.
-
-    //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
-    update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
-    if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+    // <FS:minerjr>
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    if (fs_performance_additions >= 3)
     {
-        // we are over memory target, update more agresively
-        update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
-    }
-    update_count = llmin(update_count, (U32) mUUIDMap.size());
+        LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+        // <FS:minerjr>
+        //typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
+        //entries_list_t entries;
+        // Moved these to the header so the object was not re-allocated every frame.
+        // Given a new name mTextureEntriesToProcess to be more descriptive    
+        // update N textures at beginning of mImageList
+        U32 update_count = 0;
+        static LLCachedControl<S32> MIN_UPDATE_COUNT(gSavedSettings, "TextureFetchUpdateMinCount"); // Changed to use the static cached control
+        //static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32
+        // </FS:minerjr>
+        // NOTE:  a texture may be deleted as a side effect of some of these updates
+        // Deletion rules check ref count, so be careful not to hold any LLPointer references to the textures here other than the one in entries.
 
-    { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
-        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
-
-        // copy entries out of UUID map for updating
-        entries.reserve(update_count);
-        uuid_map_t::iterator iter = mUUIDMap.upper_bound(mLastUpdateKey);
-        while (update_count-- > 0)
+        //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
+        update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
+        // <FS:minerjr>
+        //if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+        if (LLViewerTexture::sDesiredDiscardBias > 1.f)
         {
-            if (iter == mUUIDMap.end())
+            // we are over memory target, update more agresively
+            update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
+        }
+        update_count = llmin(update_count, (U32) mUUIDMap.size());
+        // <FS:minerjr>
+        // Use the new cap on the count overall (so we don't have to re-allocate memory for the vector
+        update_count = llmin(update_count, MAX_NUMBER_OF_BIAS_TEXTURES);
+        // </FS:minerjr>
+        { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
+            LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
+
+            // copy entries out of UUID map for updating
+            // <FS:minerjr>
+            //entries.reserve(update_count); // No longer needed
+            //uuid_map_t::iterator iter = mUUIDMap.upper_bound(mLastUpdateKey);
+            // <FS:minerjr>
+            uuid_map_t::iterator iter = mUUIDMap.find(mLastUpdateKey);
+            while (update_count-- > 0)
             {
-                iter = mUUIDMap.begin();
+                if (iter == mUUIDMap.end())
+                {
+                    iter = mUUIDMap.begin();
+                }
+
+                if (iter->second->getGLTexture() && iter->second->getNumRefs() > 1)
+                {
+                    mTextureEntriesToProcess.push_back(iter->second);
+                }
+                ++iter;
+            }
+        }
+
+        LLTimer timer;
+
+        for (auto& imagep : mTextureEntriesToProcess)
+        {
+            mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
+            // Move the check to before it gets added to the vector (may not work as wanted
+            //if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
+            {
+                updateImageDecodePriority(imagep);
+                imagep->updateFetch();
             }
 
-            if (iter->second->getGLTexture())
+            if (timer.getElapsedTimeF32() > max_time)
             {
-                entries.push_back(iter->second);
+                break;
             }
-            ++iter;
         }
+        // <FS:minerjr>
+        // Clear the vector as it was deleted from scope loss before
+        mTextureEntriesToProcess.clear();
+        // </FS:minerjr>
+        return timer.getElapsedTimeF32();
     }
-
-    LLTimer timer;
-
-    for (auto& imagep : entries)
+    // Perform the old code
+    else
     {
-        mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
+        typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
+        entries_list_t entries;
 
-        if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
+        // update N textures at beginning of mImageList
+        U32 update_count = 0;
+        static const S32 MIN_UPDATE_COUNT = gSavedSettings.getS32("TextureFetchUpdateMinCount");       // default: 32
+
+        // NOTE:  a texture may be deleted as a side effect of some of these updates
+        // Deletion rules check ref count, so be careful not to hold any LLPointer references to the textures here other than the one in entries.
+
+        //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
+        update_count = llmax((U32)MIN_UPDATE_COUNT, (U32)mUUIDMap.size() / 20);
+        if (LLViewerTexture::sDesiredDiscardBias > 1.f)
         {
-            updateImageDecodePriority(imagep);
-            imagep->updateFetch();
+            // we are over memory target, update more agresively
+            update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
+        }
+        update_count = llmin(update_count, (U32)mUUIDMap.size());
+
+        { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
+            LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
+
+            // copy entries out of UUID map for updating
+            entries.reserve(update_count);
+            //uuid_map_t::iterator iter = mUUIDMap.upper_bound(mLastUpdateKey);
+            uuid_map_t::iterator iter = mUUIDMap.find(mLastUpdateKey);
+            while (update_count-- > 0)
+            {
+                if (iter == mUUIDMap.end())
+                {
+                    iter = mUUIDMap.begin();
+                }
+
+                if (iter->second->getGLTexture())
+                {
+                    entries.push_back(iter->second);
+                }
+                ++iter;
+            }
         }
 
-        if (timer.getElapsedTimeF32() > max_time)
+        LLTimer timer;
+
+        for (auto& imagep : entries)
         {
-            break;
+            mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
+
+            if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
+            {
+                updateImageDecodePriority(imagep);
+                imagep->updateFetch();
+            }
+
+            if (timer.getElapsedTimeF32() > max_time)
+            {
+                break;
+            }
         }
+
+        return timer.getElapsedTimeF32();
     }
-
-    return timer.getElapsedTimeF32();
 }
 
 void LLViewerTextureList::updateImagesUpdateStats()

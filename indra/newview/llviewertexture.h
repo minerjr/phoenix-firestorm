@@ -325,6 +325,7 @@ public:
     };
 
 public:
+    LLAtomicS32 mWorkerThreadState;
     /*virtual*/ S8 getType() const override;
     FTType getFTType() const;
     /*virtual*/ void forceImmediateUpdate() override;

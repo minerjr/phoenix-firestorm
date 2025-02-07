@@ -47,6 +47,12 @@ const bool GL_TEXTURE_NO = false;
 const bool IMMEDIATE_YES = true;
 const bool IMMEDIATE_NO = false;
 
+// <FS:minerjr>
+// Create a limit of the number of textures that can be queued during
+// a high bias event (Bias = 4.00)
+// Based on 5% of 10,000 textures.
+const U32 MAX_NUMBER_OF_BIAS_TEXTURES = 500;
+// </FS:minerjr>
 class LLImageJ2C;
 class LLMessageSystem;
 class LLTextureView;
@@ -72,6 +78,15 @@ struct LLTextureKey
     LLUUID textureId;
     ETexListType textureType;
 
+    // Need to also add custom comparison functions
+    bool operator ==(const LLTextureKey& other) const
+    {
+        return (this->textureId == other.textureId) &&
+            (this->textureType == other.textureType);
+    }
+
+    // </FS:minerjr>
+
     friend bool operator<(const LLTextureKey& key1, const LLTextureKey& key2)
     {
         if (key1.textureId != key2.textureId)
@@ -84,6 +99,17 @@ struct LLTextureKey
         }
     }
 };
+// <FS:minerjr>
+// Needed to add custom hash function 
+template <>
+struct std::hash<LLTextureKey>
+{
+    std::size_t operator()( const LLTextureKey& k ) const
+    {        
+        return k.textureId.getDigest64() ^ k.textureType;
+    }
+};
+// </FS:minerjr>
 
 class LLViewerTextureList
 {
@@ -216,7 +242,12 @@ private:    // PoundLife - Improved Object Inspect
 public:
     typedef std::unordered_set<LLPointer<LLViewerFetchedTexture> > image_list_t;
     typedef std::queue<LLPointer<LLViewerFetchedTexture> > image_queue_t;
-
+    // <FS:minerjr>
+    // Moved this from LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
+    // to stop from re-allocatign every frame
+    typedef std::vector<LLPointer<LLViewerFetchedTexture> > entries_list_t;
+    entries_list_t mTextureEntriesToProcess;
+    // </FS:minerjr>
     // images that have been loaded but are waiting to be uploaded to GL
     image_queue_t mCreateTextureList;
 
@@ -236,7 +267,7 @@ public:
     static U32 sNumFastCacheReads;
 
 private:
-    typedef std::map< LLTextureKey, LLPointer<LLViewerFetchedTexture> > uuid_map_t;
+    typedef std::unordered_map< LLTextureKey, LLPointer<LLViewerFetchedTexture> > uuid_map_t;
     uuid_map_t mUUIDMap;
     LLTextureKey mLastUpdateKey;
 

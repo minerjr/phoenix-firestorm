@@ -1472,6 +1472,9 @@ void LLTextureCache::readHeaderCache()
     else
     {
         std::vector<Entry> entries;
+        // <FS:minerjr>
+        entries.reserve(mHeaderEntriesInfo.mEntries + 1);
+        // </FS:minerjr>
         U32 num_entries = openAndReadEntries(entries);
         if (num_entries)
         {
