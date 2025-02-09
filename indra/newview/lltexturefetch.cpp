@@ -446,11 +446,14 @@ public:
         WAIT_ON_WRITE,
         DONE
     };
-
+    // <FS:minerjr>
+    LLAtomicU64& mAtomicWorkerThreadState; // Update the Worker Thread State for the caller texture
+    PackedTextureWorkerData mCurrentTextureWorkerState; // Used for parsing the Worker Thread State
+    // </FS:minerjr>
 protected:
     LLTextureFetchWorker(LLTextureFetch* fetcher, FTType f_type,
                          const std::string& url, const LLUUID& id, const LLHost& host,
-                         F32 priority, S32 discard, S32 size);
+                         F32 priority, S32 discard, S32 size, LLAtomicU64& atomic_packed_texture_data);
 
 private:
 
@@ -504,6 +507,11 @@ private:
 
     void lockWorkMutex() { mWorkMutex.lock(); }
     void unlockWorkMutex() { mWorkMutex.unlock(); }
+
+    // <FS:minerjr>
+    // Updates the Atomic current texture worker state
+    void updateCurrentTextureWorkerState();
+    // </FS:minerjr>
 
     // Threads:  Ttf
     // Locks:  Mw
@@ -899,7 +907,8 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
                                            const LLHost& host,  // Simulator host
                                            F32 priority,        // Priority
                                            S32 discard,         // Desired discard
-                                           S32 size)            // Desired size
+                                           S32 size,            // Desired size
+                                           LLAtomicU64 &atomic_packed_texture_data)
     : LLWorkerClass(fetcher, "TextureFetch"),
       LLCore::HttpHandler(),
       mState(INIT),
@@ -960,7 +969,8 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mResourceWaitCount(0U),
       mFetchRetryPolicy(10.f,3600.f,2.f,10),
       mCanUseCapability(true),
-      mRegionRetryAttempt(0)
+      mRegionRetryAttempt(0),      
+      mAtomicWorkerThreadState(atomic_packed_texture_data)
 {
     // <FS:Ansariel> OpenSim compatibility
     mCanUseNET = !LLGridManager::instance().isInSecondLife() && mUrl.empty() ;
@@ -972,6 +982,15 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
         addWork(0);
     }
     setDesiredDiscard(discard, size);
+    // <FS:minerjr>
+    // Init the state of the worker thread object
+    mCurrentTextureWorkerState.Data = 0;
+    mCurrentTextureWorkerState.Accessors.mState = mState;
+    mCurrentTextureWorkerState.Accessors.mHostIP = host.getAddress();
+    mCurrentTextureWorkerState.Accessors.mHostPort = host.getPort();
+    // And store it in the atomic value, now when a value changes, we update the atomic state
+    mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+    // </FS:minerjr>
 }
 
 LLTextureFetchWorker::~LLTextureFetchWorker()
@@ -1091,6 +1110,10 @@ void LLTextureFetchWorker::setDesiredDiscard(S32 discard, S32 size)
     {
         setState(INIT);
     }
+    // <FS:minerjr>
+    // Update the current texture worker state to the changes just completed
+    updateCurrentTextureWorkerState();
+    // </FS:minerjr>
 }
 
 // Locks:  Mw
@@ -1126,7 +1149,24 @@ void LLTextureFetchWorker::startWork(S32 param)
 {
     llassert(mFormattedImage.isNull());
 }
+// <FS:minerjr>
+void LLTextureFetchWorker::updateCurrentTextureWorkerState()
+{
+    // Update the current texture worker state to the changes just completed
+    mCurrentTextureWorkerState.Accessors.mState = mState;
+    mCurrentTextureWorkerState.Accessors.mDesiredDiscard = mDesiredDiscard;
+    mCurrentTextureWorkerState.Accessors.mCanUseHTTP = mCanUseHTTP;
+    mCurrentTextureWorkerState.Accessors.mDecoded = mDecoded;
+    mCurrentTextureWorkerState.Accessors.mDecodedDiscard = (U32)(mDecodedDiscard + 1); // Need to add 1 as invalid value is -1 with normal range is 0 to  MAX_DESIRED_VALUE(5) + 1 
+    mCurrentTextureWorkerState.Accessors.mHaveWork = haveWork();
+    mCurrentTextureWorkerState.Accessors.mIsWorking = isWorking();
+    mCurrentTextureWorkerState.Accessors.mWasAborted = wasAborted();
+    // And store it in the atomic value of the new state, for the invoker texture.
+    mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;    
+}
+// </FS:minerjr>
 
+// 
 // Threads:  Ttf
 bool LLTextureFetchWorker::doWork(S32 param)
 {
@@ -1146,6 +1186,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         if (mState < DECODE_IMAGE)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - state < decode"); //<FS:Beq/> fix incorrect category
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true; // abort
         }
     }
@@ -1159,6 +1203,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - priority < 0"); //<FS:Beq/> fix incorrect category
             LL_DEBUGS(LOG_TXT) << mID << " abort: mImagePriority < F_ALMOST_ZERO" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true; // abort
         }
     }
@@ -1170,6 +1218,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         }
         else if (!mRegionRetryTimer.hasExpired())
         {
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
         // else retry
@@ -1182,6 +1234,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - state > cache_post"); //<FS:Beq/> fix incorrect category
         //nowhere to get data, abort.
         LL_WARNS(LOG_TXT) << mID << " abort, nowhere to get data" << LL_ENDL;
+        // <FS:minerjr>
+        // Update the current texture worker state to the changes just completed
+        updateCurrentTextureWorkerState();
+        // </FS:minerjr>
         return true ;
     }
 
@@ -1208,6 +1264,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         {
             LL_INFOS() << "Blacklisted texture asset blocked." << LL_ENDL;
             mState = DONE;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
         // </FS> Asset Blacklist
@@ -1261,6 +1321,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             if (size <= 0)
             {
                 setState(CACHE_POST);
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return doWork(param);
                 // return false;
             }
@@ -1314,11 +1378,19 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 //This should never happen
                 //
                 LL_DEBUGS(LOG_TXT) << mID << " this should never happen" << LL_ENDL;
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return false;
             }
         }
         else
         {
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
     }
@@ -1352,6 +1424,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             {
                 // failed to load local file, we're done.
                 LL_WARNS(LOG_TXT) << mID << ": abort, failed to load local file " << mUrl << LL_ENDL;
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return true;
             }
             // need more data
@@ -1379,6 +1455,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             else
             {
                 //LL_INFOS(LOG_TXT) << mID << " waiting to retry for " << wait_seconds << " seconds" << LL_ENDL;
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return false;
             }
         }
@@ -1458,11 +1538,19 @@ bool LLTextureFetchWorker::doWork(S32 param)
             mSentRequest = QUEUED;
             mFetcher->addToNetworkQueue(this);
             recordTextureStart(false);
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
         // </FS:Ansariel>
         else
         {
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
     }
@@ -1498,6 +1586,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 // processSimulatorPackets() failed
 //              LL_WARNS(LOG_TXT) << "processSimulatorPackets() failed to load buffer" << LL_ENDL;
                 LL_WARNS(LOG_TXT) << mID << " processSimulatorPackets() failed to load buffer" << LL_ENDL;
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return true; // failed
             }
 
@@ -1516,6 +1608,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             mFetcher->addToNetworkQueue(this); // failsafe
             recordTextureStart(false);
         }
+        // <FS:minerjr>
+        // Update the current texture worker state to the changes just completed
+        updateCurrentTextureWorkerState();
+        // </FS:minerjr>
         return false;
     }
     // </FS:Ansariel>
@@ -1537,6 +1633,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             setState(WAIT_HTTP_RESOURCE2);
             mFetcher->addHttpWaiter(this->mID);
             ++mResourceWaitCount;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
 
@@ -1550,6 +1650,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - WAIT_HTTP_RESOURCE2"); //<FS:Beq/> fix incorrect category
         // Just idle it if we make it to the head...
+        // <FS:minerjr>
+        // Update the current texture worker state to the changes just completed
+        updateCurrentTextureWorkerState();
+        // </FS:minerjr>
         return false;
     }
 
@@ -1563,6 +1667,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         {
             releaseHttpSemaphore();
             LL_WARNS(LOG_TXT) << mID << " abort: SEND_HTTP_REQ but !mCanUseHTTP" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true; // abort
         }
 
@@ -1586,12 +1694,20 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     setState(DECODE_IMAGE);
                     releaseHttpSemaphore();
                     //return false;
+                    // <FS:minerjr>
+                    // Update the current texture worker state to the changes just completed
+                    updateCurrentTextureWorkerState();
+                    // </FS:minerjr>
                     return doWork(param);
                 }
                 else
                 {
                     releaseHttpSemaphore();
                     LL_WARNS(LOG_TXT) << mID << " SEND_HTTP_REQ abort: cur_size " << cur_size << " <=0" << LL_ENDL;
+                    // <FS:minerjr>
+                    // Update the current texture worker state to the changes just completed
+                    updateCurrentTextureWorkerState();
+                    // </FS:minerjr>
                     return true; // abort.
                 }
             }
@@ -1625,6 +1741,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                               << " on empty URL." << LL_ENDL;
             resetFormattedData();
             releaseHttpSemaphore();
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true; // failed
         }
 
@@ -1673,6 +1793,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                               << LL_ENDL;
             resetFormattedData();
             releaseHttpSemaphore();
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true; // failed
         }
 
@@ -1704,6 +1828,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                         {
                             LL_WARNS(LOG_TXT) << mID << "NOT_WRITE texture missing from server (404), abort: " << mUrl << LL_ENDL;
                         }
+                        // <FS:minerjr>
+                        // Update the current texture worker state to the changes just completed
+                        updateCurrentTextureWorkerState();
+                        // </FS:minerjr>
                         return true;
                     }
 
@@ -1721,6 +1849,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                             ++mRetryAttempt;
                             mLastRegionId.setNull();
                             setState(INIT);
+                            // <FS:minerjr>
+                            // Update the current texture worker state to the changes just completed
+                            updateCurrentTextureWorkerState();
+                            // </FS:minerjr>
                             return false;
                         }
                     }
@@ -1733,6 +1865,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                         mUrl.clear();
                         releaseHttpSemaphore();
                         //return false;
+                        // <FS:minerjr>
+                        // Update the current texture worker state to the changes just completed
+                        updateCurrentTextureWorkerState();
+                        // </FS:minerjr>
                         return doWork(param);
                     }
                     // </FS:Ansariel>
@@ -1755,6 +1891,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                             ++mRetryAttempt;
                             mLastRegionId.setNull();
                             setState(INIT);
+                            // <FS:minerjr>
+                            // Update the current texture worker state to the changes just completed
+                            updateCurrentTextureWorkerState();
+                            // </FS:minerjr>
                             return false;
                         }
                     }
@@ -1788,6 +1928,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     setState(DECODE_IMAGE);
                     releaseHttpSemaphore();
                     //return false;
+                    // <FS:minerjr>
+                    // Update the current texture worker state to the changes just completed
+                    updateCurrentTextureWorkerState();
+                    // </FS:minerjr>
                     return doWork(param);
                 }
 
@@ -1796,6 +1940,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 setState(DONE);
                 releaseHttpSemaphore();
                 LL_WARNS(LOG_TXT) << mID << " abort: fail harder" << LL_ENDL;
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return true; // failed
             }
 
@@ -1821,6 +1969,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 setState(DONE);
                 LL_WARNS(LOG_TXT) << mID << " abort: no data received" << LL_ENDL;
                 releaseHttpSemaphore();
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return true;
             }
 
@@ -1839,6 +1991,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                       << mID << ".  Aborting load."  << LL_ENDL;
                     setState(DONE);
                     releaseHttpSemaphore();
+                    // <FS:minerjr>
+                    // Update the current texture worker state to the changes just completed
+                    updateCurrentTextureWorkerState();
+                    // </FS:minerjr>
                     return true;
                 }
                 src_offset = cur_size - mHttpReplyOffset;
@@ -1855,6 +2011,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 setState(DONE);
                 LL_WARNS(LOG_TXT) << mID << " abort: out of memory" << LL_ENDL;
                 releaseHttpSemaphore();
+                // <FS:minerjr>
+                // Update the current texture worker state to the changes just completed
+                updateCurrentTextureWorkerState();
+                // </FS:minerjr>
                 return true;
             }
 
@@ -1909,6 +2069,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             }
             releaseHttpSemaphore();
             //return false;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return doWork(param);
         }
         else
@@ -1919,7 +2083,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             // an enormous amount of time to load textures.  We'll revisit the
             // various possible timeout components (total request time, connection
             // time, I/O time, with and without retries, etc.) in the future.
-
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
     }
@@ -1933,6 +2100,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         {
             // for debug use, don't decode
             setState(DONE);
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
 
@@ -1941,6 +2112,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             // We aborted, don't decode
             setState(DONE);
             LL_DEBUGS(LOG_TXT) << mID << " DECODE_IMAGE abort: desired discard " << mDesiredDiscard << "<0" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
 
@@ -1951,6 +2126,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             //abort, don't decode
             setState(DONE);
             LL_DEBUGS(LOG_TXT) << mID << " DECODE_IMAGE abort: (mFormattedImage->getDataSize() <= 0)" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
         if (mLoadedDiscard < 0)
@@ -1960,6 +2139,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             //abort, don't decode
             setState(DONE);
             LL_DEBUGS(LOG_TXT) << mID << " DECODE_IMAGE abort: mLoadedDiscard < 0" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
         mDecodeTimer.reset();
@@ -1972,6 +2155,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         S32 discard = mHaveAllData && mFormattedImage->getCodec() != IMG_CODEC_J2C ? 0 : mLoadedDiscard;
         mDecoded  = false;
         setState(DECODE_IMAGE_UPDATE);
+        // <FS:minerjr>
+        // Update the current texture worker state to the changes just completed
+        updateCurrentTextureWorkerState();
+        // </FS:minerjr>
         LL_DEBUGS(LOG_TXT) << mID << ": Decoding. Bytes: " << mFormattedImage->getDataSize() << " Discard: " << discard
                            << " All Data: " << mHaveAllData << LL_ENDL;
 
@@ -1988,6 +2175,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             // Happens if viewer is shutting down
             setState(DONE);
             LL_DEBUGS(LOG_TXT) << mID << " DECODE_IMAGE abort: failed to post for decoding" << LL_ENDL;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
         // fall though
@@ -2011,6 +2202,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     ++mRetryAttempt;
                     setState(INIT);
                     //return false;
+                    // <FS:minerjr>
+                    // Update the current texture worker state to the changes just completed
+                    updateCurrentTextureWorkerState();
+                    // </FS:minerjr>
                     return doWork(param);
                 }
                 else
@@ -2030,6 +2225,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         }
         else
         {
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
     }
@@ -2043,6 +2242,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
             // or we failed to load anything, skip
             setState(DONE);
             //return false;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return doWork(param);
         }
 
@@ -2095,6 +2298,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 // Prioritize the write
                 mFetcher->mTextureCache->prioritizeWrite(mCacheWriteHandle);
             }
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return false;
         }
     }
@@ -2110,15 +2317,25 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                << " mDecodedDiscard " << mDecodedDiscard << ">= 0 && mDesiredDiscard " << mDesiredDiscard
                                << "<" << " mDecodedDiscard " << mDecodedDiscard << LL_ENDL;
             // return false;
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return doWork(param);
         }
         else
         {
             mFetchTime = mFetchTimer.getElapsedTimeF32();
+            // <FS:minerjr>
+            // Update the current texture worker state to the changes just completed
+            updateCurrentTextureWorkerState();
+            // </FS:minerjr>
             return true;
         }
     }
-
+    // <FS:minerjr>
+    updateCurrentTextureWorkerState();
+    // </FS:minerjr>
     return false;
 }                                                                       // -Mw
 
@@ -2243,6 +2460,10 @@ void LLTextureFetchWorker::endWork(S32 param, bool aborted)
         mDecodeHandle = 0;
     }
     mFormattedImage = NULL;
+    // <FS:minerjr>
+    // Update the current texture worker state to the changes just completed
+    updateCurrentTextureWorkerState();
+    // </FS:minerjr>
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -2326,6 +2547,19 @@ bool LLTextureFetchWorker::deleteOK()
          ((mState >= WRITE_TO_CACHE && mState <= WAIT_ON_WRITE))))
     {
         delete_ok = false;
+    }
+
+    if (delete_ok)
+    {
+        // <FS:minerjr>
+        // Set the current texture worker state to an invalid value to inidicate that there is no no worker thread assigned the texture
+        if (getFlags(LLWorkerClass::WCF_DELETE_REQUESTED))
+        {
+            mCurrentTextureWorkerState.Accessors.mState = DONE + 1;
+            // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
+            mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+        }
+        // </FS:minerjr>
     }
 
     return delete_ok;
@@ -2754,7 +2988,7 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-                                   S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http)
+                                   S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, LLAtomicU64 &atomic_packed_texture_data)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2766,18 +3000,42 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
     {
         LL_DEBUGS("Avatar") << " requesting " << id << " " << w << "x" << h << " discard " << desired_discard << " type " << f_type << LL_ENDL;
     }
-    LLTextureFetchWorker* worker = getWorker(id) ;
+    // <FS:minerjr>
+    /*
+    LLTextureFetchWorker* worker = getWorker(id);
     if (worker)
     {
         if (worker->mHost != host)
         {
             LL_WARNS(LOG_TXT) << "LLTextureFetch::createRequest " << id << " called with multiple hosts: "
-                              << host << " != " << worker->mHost << LL_ENDL;
+                << host << " != " << worker->mHost << LL_ENDL;
             removeRequest(worker, true);
             worker = NULL;
             return CREATE_REQUEST_ERROR_MHOSTS;
         }
     }
+    */
+    // Assign the current texture worker state to the atomic packed texture data (To see into the worker assigned to this texture)
+    mCurrentTextureWorkerState.Data = atomic_packed_texture_data.CurrentValue();
+    // If the value of the atomic packed texture data is not 0, that means there is an worker thread assigned to this UUID already
+    // And if the host information does not match the current host data we can remove the request and return ane error.
+    // we could get ride of the second check in side but for now, be thread safe.
+    if (mCurrentTextureWorkerState.Data != 0 && mCurrentTextureWorkerState.Accessors.mHostIP != host.getAddress() && mCurrentTextureWorkerState.Accessors.mHostPort != host.getPort() && mCurrentTextureWorkerState.Accessors.mState != (LLTextureFetchWorker::DONE + 1))
+    {
+        LLTextureFetchWorker* worker = getWorker(id);
+        if (worker)
+        {
+            if (worker->mHost != host)
+            {
+                LL_WARNS(LOG_TXT) << "LLTextureFetch::createRequest " << id << " called with multiple hosts: "
+                    << host << " != " << worker->mHost << LL_ENDL;
+                removeRequest(worker, true);
+                worker = NULL;
+                return CREATE_REQUEST_ERROR_MHOSTS;
+            }
+        }
+    }
+    // </FS:minerjr>
 
     S32 desired_size;
     std::string exten = gDirUtilp->getExtension(url);
@@ -2822,8 +3080,8 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         desired_size = TEXTURE_CACHE_ENTRY_SIZE;
         desired_discard = MAX_DISCARD_LEVEL;
     }
-
-
+    // <FS:minerjr>
+    /*
     if (worker)
     {
         if (worker->wasAborted())
@@ -2858,7 +3116,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
     }
     else
     {
-        worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size);
+        worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size, atomic_packed_texture_data);
         lockQueue();                                                    // +Mfq
         mRequestMap[id] = worker;
         unlockQueue();                                                  // -Mfq
@@ -2869,6 +3127,62 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->setCanUseHTTP(can_use_http) ;
         worker->unlockWorkMutex();                                      // -Mw
     }
+    */
+    // Get the current worker thread last state
+    mCurrentTextureWorkerState.Data = atomic_packed_texture_data.CurrentValue();
+    // If the current worker thread's mState is no invalid, then do the normal operations
+    if (mCurrentTextureWorkerState.Accessors.mState != LLTextureFetchWorker::DONE + 1)
+    {
+        LLTextureFetchWorker* worker = getWorker(id);
+        if (worker)
+        {
+            if (worker->wasAborted())
+            {
+                return CREATE_REQUEST_ERROR_ABORTED; // need to wait for previous aborted request to complete
+            }
+            worker->lockWorkMutex();                                        // +Mw
+            if (worker->mState == LLTextureFetchWorker::DONE && worker->mDesiredSize == llmax(desired_size, TEXTURE_CACHE_ENTRY_SIZE) && worker->mDesiredDiscard == desired_discard)
+            {
+                worker->unlockWorkMutex();                                  // -Mw
+
+                return CREATE_REQUEST_ERROR_TRANSITION; // similar request has finished, failed or is in a transitional state
+            }
+            worker->mActiveCount++;
+            worker->mNeedsAux = needs_aux;
+            worker->setImagePriority(priority);
+            worker->setDesiredDiscard(desired_discard, desired_size);
+            worker->setCanUseHTTP(can_use_http);
+
+            //MAINT-4184 url is always empty.  Do not set with it.
+
+            if (!worker->haveWork())
+            {
+                worker->setState(LLTextureFetchWorker::INIT);
+                worker->unlockWorkMutex();                                  // -Mw
+
+                worker->addWork(0);
+            }
+            else
+            {
+                worker->unlockWorkMutex();                                  // -Mw
+            }
+        }
+    }
+    // Else we can save a lock as there is 
+    else
+    {
+        LLTextureFetchWorker* worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size, atomic_packed_texture_data);
+        lockQueue();                                                    // +Mfq
+        mRequestMap[id] = worker;
+        unlockQueue();                                                  // -Mfq
+
+        worker->lockWorkMutex();                                        // +Mw
+        worker->mActiveCount++;
+        worker->mNeedsAux = needs_aux;
+        worker->setCanUseHTTP(can_use_http) ;
+        worker->unlockWorkMutex();                                      // -Mw
+    }
+
 
     LL_DEBUGS(LOG_TXT) << "REQUESTED: " << id << " f_type " << fttype_to_string(f_type)
                        << " Discard: " << desired_discard << " size " << desired_size << LL_ENDL;
@@ -3134,7 +3448,7 @@ bool LLTextureFetch::getRequestFinished(const LLUUID& id, S32& discard_level, S3
             worker->lockWorkMutex();                                    // +Mw
             if ((worker->mDecodedDiscard >= 0) &&
                 (worker->mDecodedDiscard < discard_level || discard_level < 0) &&
-                (worker->mState >= LLTextureFetchWorker::WAIT_ON_WRITE))
+                (worker->mState >= LLTextureFetchWorker::DONE))
             {
                 // Not finished, but data is ready
                 discard_level = worker->mDecodedDiscard;

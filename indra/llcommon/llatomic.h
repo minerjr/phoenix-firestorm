@@ -29,7 +29,9 @@
 
 #include "stdtypes.h"
 
+#include <memory>
 #include <atomic>
+#include <optional>
 
 template <typename Type, typename AtomicType = std::atomic< Type > > class LLAtomicBase
 {
@@ -75,5 +77,53 @@ typedef LLAtomicBase<S64, std::atomic_llong> LLAtomicS64;
 #endif
 
 typedef LLAtomicBase<bool, std::atomic_bool> LLAtomicBool;
+
+// <FS:minerjr>
+// New Atomic Queue
+template <typename Type> class FSAtomicQueue
+{
+public:
+    struct FSAtomicQueueNode
+    {
+        std::atomic<std::shared_ptr<Type>> mData;
+        LLAtomicU64 mState;
+        std::atomic<FSAtomicQueueNode *> mNext;
+        std::atomic<FSAtomicQueueNode *> mPrev;
+
+        FSAtomicQueueNode(FSAtomicQueueNode&) = delete;
+        void operator=(FSAtomicQueueNode&) = delete;
+    };
+
+    FSAtomicQueue() = default;
+    ~FSAtomicQueue() = default;
+
+    void push(Type value)
+    {
+        auto active = std::make_shared<FSAtomicQueueNode>(std::move(value), mHead.load());
+        while (not mHead.compare_exchange_weak(active->mNext, active));
+    }
+
+    std::optional<Type> pop()
+    {
+        auto active = mHead.load();
+        while (active != nullptr && not mTail.compare_exchange_weak(active, active->next));
+
+        if (active != nullptr)
+        {
+            return {std::move(active->value)};
+        }
+        else
+        {
+            return std::nullopt;
+        }
+    }
+protected:
+
+private:
+
+    std::atomic<std::shared_ptr<FSAtomicQueueNode>> mHead;
+    std::atomic<std::shared_ptr<FSAtomicQueueNode>> mTail;
+};
+// <FS:minerjr>
 
 #endif // LL_LLATOMIC_H

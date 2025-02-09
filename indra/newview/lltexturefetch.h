@@ -86,7 +86,7 @@ public:
 
     // Threads:  T* (but Tmain mostly)
     S32 createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-                       S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http);
+                       S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http, LLAtomicU64 &atomic_packed_texture_data);
 
     // Requests that a fetch operation be deleted from the queue.
     // If @cancel is true, also stops any I/O operations pending.
@@ -420,6 +420,10 @@ private:
     U32 mTotalCacheWriteCount;                                          // Mfq
     U32 mTotalResourceWaitCount;                                        // Mfq
 
+    // <FS:minerjr>
+    // Used to decode the Atamic U64 for texture workers
+    PackedTextureWorkerData mCurrentTextureWorkerState;
+    // </FS:minerjr>
 public:
     // A probabilistically-correct indicator that the current
     // attempt to log metrics follows a break in the metrics stream

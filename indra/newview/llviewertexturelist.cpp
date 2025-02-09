@@ -1167,11 +1167,22 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
             LLViewerFetchedTexture* image = mDownScaleQueue.front();
             llassert(image->mDownScalePending);
 
-            LLImageGL* img = image->getGLTexture();
-            if (img && img->getHasGLTexture())
-            {
-                img->scaleDown(image->getDesiredDiscardLevel());
+            // <FS:minerjr>
+            //LLImageGL* img = image->getGLTexture();
+            //if (img && img->getHasGLTexture())
+            //{
+            //    img->scaleDown(image->getDesiredDiscardLevel());
+            //}            
+            // Check what the new desired discard level is and if we have it already on the raw image list
+            if (!image->tryToUseRawImagesToScaleDown(image->getDesiredDiscardLevel()))
+            {            
+                LLImageGL* img = image->getGLTexture();
+                if (img && img->getHasGLTexture())
+                {
+                    img->scaleDown(image->getDesiredDiscardLevel());                    
+                }
             }
+            // </FS:minerjr>
 
             image->mDownScalePending = false;
             mDownScaleQueue.pop();

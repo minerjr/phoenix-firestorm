@@ -1178,6 +1178,12 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mForceCallbackFetch = false;
 
     mFTType = FTT_UNKNOWN;
+
+    // Init the worker thread state values to an invalid state and store it in the atomic which will be used by any texture fetch worker that will report back to us.
+    mWorkerThreadStateValues.Data = 0;
+    mWorkerThreadStateValues.Accessors.mState = 15; // DONE + 1 (invalid value)
+    mAtomicWorkerThreadState = mWorkerThreadStateValues.Data;
+    
 }
 
 LLViewerFetchedTexture::~LLViewerFetchedTexture()
@@ -1300,7 +1306,7 @@ void LLViewerFetchedTexture::loadFromFastCache()
 
             // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
             // Make sure that the raw discard is valid
-            if (fs_performance_additions >= 2 && mIsRawImageValid == true)
+            if (fs_performance_additions >= 2)
             {
                 // If the raw is OK, but not the same as what is requried, still save it
                 // Track the last time the raw images were updated
@@ -2184,16 +2190,29 @@ bool LLViewerFetchedTexture::updateFetch()
         // Sets mRawDiscardLevel, mRawImage, mAuxRawImage
         S32 fetch_discard = current_discard;
 
+        // Check if the fetch is still going on, if done, then continue, else return to come back later on
+        mWorkerThreadStateValues.Data = mAtomicWorkerThreadState.CurrentValue();
+
+        // If the state is below DONE = 14, that means it is still transfering as it has work and is still working
+        if (mWorkerThreadStateValues.Accessors.mState < 14 && mWorkerThreadStateValues.Accessors.mHaveWork && mWorkerThreadStateValues.Accessors.mIsWorking)
+        {
+            return false;
+        }
+        bool finished = true;
         if (mRawImage.notNull()) sRawCount--;
         if (mAuxRawImage.notNull()) sAuxCount--;
-        // keep in mind that fetcher still might need raw image, don't modify original
-        bool finished = LLAppViewer::getTextureFetch()->getRequestFinished(getID(), fetch_discard, mFetchState, mRawImage, mAuxRawImage,
-                                                                           mLastHttpGetStatus);
-        if (mRawImage.notNull()) sRawCount++;
-        if (mAuxRawImage.notNull())
+        // If the worker was not aborted, then do the normal processing as it should be done.
+        if (mWorkerThreadStateValues.Accessors.mWasAborted == 0)
         {
-            mHasAux = true;
-            sAuxCount++;
+            // keep in mind that fetcher still might need raw image, don't modify original
+            finished = LLAppViewer::getTextureFetch()->getRequestFinished(getID(), fetch_discard, mFetchState, mRawImage, mAuxRawImage,
+                                                                               mLastHttpGetStatus);
+            if (mRawImage.notNull()) sRawCount++;
+            if (mAuxRawImage.notNull())
+            {
+                mHasAux = true;
+                sAuxCount++;
+            }
         }
         if (finished)
         {
@@ -2329,7 +2348,7 @@ bool LLViewerFetchedTexture::updateFetch()
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
-                                                                              w, h, c, desired_discard, needsAux(), mCanUseHTTP);
+                                                                              w, h, c, desired_discard, needsAux(), mCanUseHTTP, mAtomicWorkerThreadState);
 
         if (fetch_request_response >= 0) // positive values and 0 are discard values
         {
@@ -2339,6 +2358,8 @@ bool LLViewerFetchedTexture::updateFetch()
             // in some cases createRequest can modify discard, as an example
             // bake textures are always at discard 0
             mRequestedDiscardLevel = llmin(desired_discard, fetch_request_response);
+
+            if (fs_performance_additions >= 2)
             mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
                                                        mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
         }
@@ -2901,7 +2922,7 @@ bool LLViewerFetchedTexture::doLoadedCallbacks()
         if (mRawImages[foundRawIndex].notNull()) break;
     }
     // If the raw is not valid or is the raw is valid, and is not as good a quality 
-    if ((!mIsRawImageValid || foundRawIndex < mRawDiscardLevel) && foundRawIndex >= 0 && foundRawIndex <= MAX_DISCARD_LEVEL)
+    if ((!mIsRawImageValid || foundRawIndex < mRawDiscardLevel) && foundRawIndex >= 0 && foundRawIndex <= MAX_DISCARD_LEVEL + 1)
     {
         current_raw_discard = foundRawIndex;
         best_raw_discard = llmin(best_raw_discard, foundRawIndex);
@@ -3265,6 +3286,22 @@ bool LLViewerFetchedTexture::tryToClearRawImages()
     }
     return false;
 }
+
+// Tries to use the cached raw images instead of downscaling the LLGLImage
+bool LLViewerFetchedTexture::tryToUseRawImagesToScaleDown(S32 desiredDiscardLevel)
+{
+    // Store the result of the attempt
+    bool result = false;
+    // If the desired discard level is within the range of the possible values and the raw image at that scale is not null, then
+    if (desiredDiscardLevel >= 0 && desiredDiscardLevel < MAX_DISCARD_LEVEL + 2 && mRawImages[desiredDiscardLevel].notNull())
+    {
+        // Use the existing RAW texture
+        result = mGLTexturep->createGLTexture(desiredDiscardLevel, mRawImages[desiredDiscardLevel], 0, true, mBoostLevel);
+        
+    }
+    return result;
+}
+
 // </FS:minerjr> [FIRE-35011]
 
 void LLViewerFetchedTexture::readbackRawImage()

@@ -2225,8 +2225,16 @@ bool LLTextureCache::writeComplete(handle_t handle, bool abort)
     if (iter != mWriters.end())
     {
         LLTextureCacheWorker* worker = iter->second;
-        if (worker->complete() || abort)
+        if (worker->complete())
         {
+            mWriters.erase(handle);
+            unlockWorkers();
+            worker->scheduleDelete();
+            return true;
+        }
+        else if (abort)
+        {
+            LL_INFOS() << "Abort worker: " << worker->getName() << " Writes Left: " << mWriters.size() << LL_ENDL;
             mWriters.erase(handle);
             unlockWorkers();
             worker->scheduleDelete();

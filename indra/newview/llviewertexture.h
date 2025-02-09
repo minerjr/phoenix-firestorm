@@ -55,7 +55,40 @@ class LLViewerFetchedTexture ;
 class LLViewerMediaTexture ;
 class LLTexturePipelineTester ;
 
-
+// <FS:minerjr>
+// This union is used to encode and decode the
+// LLAtomicU64 data for the texture worker
+// We use this to indicate the LLViewerFetchedTexture
+// when it should read from the LLTextureFetch thread
+// so that we don't have to block both the thread
+// and the main thread
+// The main thread does not write to this object
+// as it is only for information and only the
+// LLTextureFetchWorker changes the values.
+// The LLAtomicU64 lives in the LLViewerFetchedTexture
+// and is passed by reference to the LLTextureFetch,
+// when then passes it by reference to the LLTextureFetchWorker
+// and stores the reference and has its own PackedTextureWorkerData
+// which it maintains and every time it is updated, it stores the U64 Data
+// on the LLAtomicU64.
+typedef union PackedTextureWorkerData
+{
+    U64 Data;
+    struct Accessors_s
+    {
+        U32 mState : 4;
+        U32 mDecodedDiscard : 3;
+        U32 mDesiredDiscard : 3;
+        U32 mHaveWork : 1;
+        U32 mIsWorking : 1;
+        U32 mWasAborted : 1;
+        U32 mCanUseHTTP : 1;
+        U32 mDecoded : 1;
+        U32 mHostPort : 16;
+        U32 mHostIP;
+    }Accessors;
+}PackedTextureWorkerData_u;
+// </FS:minerjr>
 typedef void    (*loaded_callback_func)( bool success, LLViewerFetchedTexture *src_vi, LLImageRaw* src, LLImageRaw* src_aux, S32 discard_level, bool final, void* userdata );
 
 class LLFileSystem;
@@ -325,7 +358,10 @@ public:
     };
 
 public:
-    LLAtomicS32 mWorkerThreadState;
+    // <FS:minerjr>
+    LLAtomicU64 mAtomicWorkerThreadState;
+    PackedTextureWorkerData mWorkerThreadStateValues;
+    // </FS:minerjr>
     /*virtual*/ S8 getType() const override;
     FTType getFTType() const;
     /*virtual*/ void forceImmediateUpdate() override;
@@ -418,6 +454,7 @@ public:
 
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
     bool        tryToClearRawImages(); // Try to clear the raw images every 30 seconds (Can be made to be variable to allow users control over time frame)
+    bool        tryToUseRawImagesToScaleDown(S32 desiredDiscardLevel);
     // </FS:minerjr> [FIRE-35011]
     // readback the raw image from OpenGL if mRawImage is not valid
     void        readbackRawImage();
