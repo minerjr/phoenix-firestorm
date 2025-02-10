@@ -455,7 +455,12 @@ public:
 protected:
     LLTextureFetchWorker(LLTextureFetch* fetcher, FTType f_type,
                          const std::string& url, const LLUUID& id, const LLHost& host,
-                         F32 priority, S32 discard, S32 size, LLAtomicU64& atomic_packed_texture_data);
+                         F32 priority, S32 discard, S32 size, LLAtomicU64& atomic_packed_texture_data,
+                         F32 fetch_retry_policy_min_delay, // Min delay for fetch retry policy
+                         F32 fetch_retry_policy_max_delay, // Max delay for fetch retry policy
+                         F32 fetch_retry_policy_backoff_factor, // Backoff factor for fetch retry policy
+                         U32 fetch_retry_policy_max_retries, // Max retries for fetch retry policy
+                         bool fetch_retry_policy_retry_on_40x);
 
 private:
 
@@ -902,6 +907,7 @@ volatile bool LLTextureFetch::svMetricsDataBreak(true); // Start with a data bre
 
 // called from MAIN THREAD
 
+// <FS:minerjr>
 LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
                                            FTType f_type, // Fetched image type
                                            const std::string& url, // Optional URL
@@ -910,7 +916,12 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
                                            F32 priority,        // Priority
                                            S32 discard,         // Desired discard
                                            S32 size,            // Desired size
-                                           LLAtomicU64 &atomic_packed_texture_data)
+                                           LLAtomicU64 &atomic_packed_texture_data,
+                                           F32 fetch_retry_policy_min_delay, // Min delay for fetch retry policy
+                                           F32 fetch_retry_policy_max_delay, // Max delay for fetch retry policy
+                                           F32 fetch_retry_policy_backoff_factor, // Backoff factor for fetch retry policy
+                                           U32 fetch_retry_policy_max_retries, // Max retries for fetch retry policy
+                                           bool fetch_retry_policy_retry_on_40x) // Retry on 40x error for fetch retry policy
     : LLWorkerClass(fetcher, "TextureFetch"),
       LLCore::HttpHandler(),
       mState(INIT),
@@ -969,7 +980,11 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mCacheReadCount(0U),
       mCacheWriteCount(0U),
       mResourceWaitCount(0U),
-      mFetchRetryPolicy(10.f,3600.f,2.f,10),
+// <FS:minerjr>
+      // Add support to customize the fetch retry policy to try to help users with bad network connections
+      //mFetchRetryPolicy(10.0f, 3600.0f, 2.f, 10),
+      mFetchRetryPolicy(fetch_retry_policy_min_delay,fetch_retry_policy_max_delay,fetch_retry_policy_backoff_factor,fetch_retry_policy_max_retries, fetch_retry_policy_retry_on_40x),
+// <//FS:minerjr>
       mCanUseCapability(true),
       mRegionRetryAttempt(0),      
       mAtomicWorkerThreadState(atomic_packed_texture_data),
@@ -3183,7 +3198,17 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
     // Else we can save a lock as there is 
     else
     {
-        LLTextureFetchWorker* worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size, atomic_packed_texture_data);
+        // <FS:minerjr>
+        //LLTextureFetchWorker* worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size);
+        //F32 min_delay, F32 max_delay, F32 backoff_factor, U32 max_retries, bool retry_on_4xx = false
+        static LLCachedControl<F32> fetch_retry_policy_min_delay(gSavedSettings, "FSFetchRPMinDelay", 10.0f);
+        static LLCachedControl<F32> fetch_retry_policy_max_delay(gSavedSettings, "FSFetchRPMaxDelay", 3600.0f);
+        static LLCachedControl<F32> fetch_retry_policy_backoff_factor(gSavedSettings, "FSFetchRPBackoffFactor", 2.0f);
+        static LLCachedControl<U32> fetch_retry_policy_max_retries(gSavedSettings, "FSFetchRPMaxRestries", 10);
+        static LLCachedControl<bool> fetch_retry_policy_retry_on_40x(gSavedSettings, "FSFetchRPRetryOn40x", false);
+
+        LLTextureFetchWorker* worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size, atomic_packed_texture_data, fetch_retry_policy_min_delay, fetch_retry_policy_max_delay, fetch_retry_policy_backoff_factor, fetch_retry_policy_max_retries, fetch_retry_policy_retry_on_40x);
+        // </FS:minerjr>
         lockQueue();                                                    // +Mfq
         mRequestMap[id] = worker;
         unlockQueue();                                                  // -Mfq

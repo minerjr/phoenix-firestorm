@@ -170,20 +170,20 @@
 			May cause issues
 		</text>
 
-		<check_box
-		 control_name="ConnectionPortEnabled"
-		 height="16"
-		 label="Custom port"
-		 layout="topleft"
-		 left="15"
-		 name="connection_port_enabled"
-		 top_pad="20"
-		 width="256">
-			<!-- check_box.commit_callback
+        <check_box
+                 control_name="ConnectionPortEnabled"
+                 height="16"
+                 label="Custom port"
+                 layout="topleft"
+                 left="15"
+                 name="connection_port_enabled"
+                 top_pad="20"
+                 width="256">
+            <!-- check_box.commit_callback
 			 function="Notification.Show"
 			 parameter="ChangeConnectionPort" / -->
-		</check_box>
-		<spinner
+        </check_box>
+        <spinner
 		 control_name="ConnectionPort"
 		 enabled_control="ConnectionPortEnabled"
 		 decimal_digits="0"
@@ -201,6 +201,87 @@
 		 name="connection_port"
 		 width="150" />
 
+        <check_box
+		 control_name="FetchPolicyCheck"
+		 height="16"
+		 label="Fetch Policy"
+		 layout="topleft"
+		 left_pad="15"
+		 name="FetchPolicyCheck"
+		 top_pad="20"
+		 follows="left|top"         
+		 width="256">
+        </check_box>
+        <spinner
+		 control_name="FSFetchRPMinDelay"
+		 enabled_control="FetchPolicyCheck"
+		 decimal_digits="0"
+		 follows="left|top"
+		 height="23"
+		 increment="0.1"
+		 initial_value="10"
+		 label="Min Delay(ms):"
+		 label_width="75"
+		 layout="topleft"
+		 max_val="1000"
+		 min_val="0"
+		 top_pad="5"
+		 left="20"
+		 name="FSFetchRPMinDelay"
+		 width="150" />
+        <spinner
+		 control_name="FSFetchRPMaxDelay"
+		 enabled_control="FetchPolicyCheck"
+		 decimal_digits="0"
+		 follows="left|top"
+		 height="23"
+		 increment="0.1"
+		 initial_value="3600"
+		 label="Max Delay(ms):"
+		 label_width="75"
+		 layout="topleft"
+		 max_val="7200"
+		 min_val="1001"
+		 top_pad="5"
+		 left="20"
+		 name="FSFetchRPMaxDelay"
+		 width="150" />
+        <spinner
+        control_name="FSFetchRPBackoffFactor"
+        enabled_control="FetchPolicyCheck"
+        decimal_digits="0"
+        follows="left|top"
+        height="23"
+        increment="0.1"
+        initial_value="2"
+        label="Backoff Factor:"
+        label_width="75"
+        layout="topleft"
+        max_val="7200"
+        min_val="1001"
+        top_pad="5"
+        left="20"
+        name="FSFetchRPBackoffFactor"
+        width="150" />
+        <spinner
+        control_name="FSFetchRPMaxRestries"
+        enabled_control="FetchPolicyCheck"
+        decimal_digits="0"
+        follows="left|top"
+        height="23"
+        increment="1"
+        initial_value="10"
+        label="# of Retries:"
+        label_width="75"
+        layout="topleft"
+        max_val="20"
+        min_val="0"
+        top_pad="5"
+        left="20"
+        name="FSFetchRPMaxRestries"
+        width="150" />
+
+        
 		<text
 		 type="string"
 		 length="1"
