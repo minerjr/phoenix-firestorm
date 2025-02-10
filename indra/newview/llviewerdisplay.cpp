@@ -1283,7 +1283,7 @@ void display_cube_face()
 
     gPipeline.mBackfaceCull = true;
 
-    //gViewerWindow->setup3DViewport();
+    //gViewerWindow->setup3DViewport();  // <FS:minerjr> Remove redutant OpenGL API call
 
     if (gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_HUD))
     { //don't draw hud objects in this frame

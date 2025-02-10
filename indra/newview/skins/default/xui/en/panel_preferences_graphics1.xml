@@ -1263,13 +1263,17 @@ If you do not understand the distinction then leave this control alone."
              name="4"
              value="4" />
             <combo_box.item
-             label="Limit the amount of cube map regens to only visible ones"
+             label="Use particle pool"
              name="5"
-             value="5" />
+             value="5" />          
             <combo_box.item
-             label="Limit the regen to cube maps to 1 time when become visible"
+             label="Limit the amount of cube map regens to only visible ones"
              name="6"
              value="6" />
+            <combo_box.item
+             label="Limit the regen to cube maps to 1 time when become visible"
+             name="7"
+             value="7" />
         </combo_box>
         <!-- </FS:minerjr> [FIRE-35011] -->
     </panel>

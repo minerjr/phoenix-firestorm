@@ -357,7 +357,9 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
 void LLViewerPartGroup::updateParticles(const F32 lastdt)
 {
     F32 dt;
-
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
     LLVector3 gravity(0.f, 0.f, GRAVITY);
     // <FS:minerjr>
     //LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
@@ -492,7 +494,6 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
             //--LLViewerPartSim::sParticleCount;             
             //delete part ;
             // Relase the particle
-            static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
             LLViewerPartSim::getInstance()->releaseParticle(part);
             // </FS:minerjr>
             changed = true; 
@@ -754,18 +755,21 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
 // Checks to see if a parcile can be added
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
+
     // Can only get a pointer to a viewer particle if there is a free particle
     // So if the pointer is not NULL, it should be valid
     if (part != NULL)
     {
-        static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-        S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+        // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+        static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+        // </FS:minerjr> [FIRE-35011]
+        S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
         if (particleCount < MAX_PART_COUNT)
         {
             // Add the particle to one of the groups
             put(part);
         }
-        else if (!mbUseParticlePool)
+        else if (fs_performance_additions < 5)
         {
             releaseParticle(part);
         }
@@ -999,8 +1003,10 @@ void LLViewerPartSim::updateSimulation()
         }
 
     }
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
+    S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
     if (LLDrawable::getCurrentFrame()%16==0)
     {
         if (particleCount > sMaxParticleCount * 0.875f
@@ -1025,8 +1031,10 @@ void LLViewerPartSim::updateSimulation()
 
 void LLViewerPartSim::updatePartBurstRate()
 {
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
+    S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
     if (!(LLDrawable::getCurrentFrame() & 0xf))
     {
         if (particleCount >= MAX_PART_COUNT) // set rate to zero
@@ -1118,8 +1126,10 @@ void LLViewerPartSim::clearParticlesByOwnerID(const LLUUID& task_id)
 // Tries to return the pointe to the next free particle
 LLViewerPart* LLViewerPartSim::getFreeParticle()
 {
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-    if (!mbUseParticlePool)
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
+    if (fs_performance_additions < 5)
     {
         sParticleCount2++;
         return new LLViewerPart();
@@ -1139,7 +1149,6 @@ LLViewerPart* LLViewerPartSim::getFreeParticle()
 
 bool LLViewerPartSim::releaseParticle(LLViewerPart* part)
 {
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
     //if (!mbUseParticlePool)
     //{
     //    sParticleCount2--;
@@ -1208,8 +1217,10 @@ bool LLViewerPartSim::releaseParticles(LLViewerPartGroup::part_list_t removeList
 
 F32 LLViewerPartSim::maxRate() // Return maximum particle generation rate
 {
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
+    S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
     if (particleCount >= MAX_PART_COUNT)
     {
         return 1.f;
@@ -1223,8 +1234,10 @@ F32 LLViewerPartSim::maxRate() // Return maximum particle generation rate
 
 bool LLViewerPartSim::aboveParticleLimit() const
 {
-    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
-    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    // </FS:minerjr> [FIRE-35011]
+    S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
     return particleCount > sMaxParticleCount;
 }
 // </FS:minerjr>

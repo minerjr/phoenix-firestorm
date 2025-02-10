@@ -459,6 +459,7 @@ void LLViewerTextureManager::init()
 void LLViewerTextureManager::cleanup()
 {
     stop_glerror();
+
     delete gTextureManagerBridgep;
     LLImageGL::sDefaultGLTexture = NULL;
     LLViewerTexture::sNullImagep = NULL;
@@ -732,7 +733,7 @@ S8 LLViewerTexture::getType() const
 }
 
 void LLViewerTexture::cleanup()
-{    
+{
     if (LLAppViewer::getTextureFetch())
     {
         LLAppViewer::getTextureFetch()->disableAtomicWorkerUpdates(getID());
@@ -1200,7 +1201,7 @@ LLViewerFetchedTexture::~LLViewerFetchedTexture()
     assert_main_thread();
     //*NOTE getTextureFetch can return NULL when Viewer is shutting down.
     // This is due to LLWearableList is singleton and is destroyed after
-    // LLAppViewer::cleanup() was called. (see ticket EXT-177)    
+    // LLAppViewer::cleanup() was called. (see ticket EXT-177)
     if (mHasFetcher && LLAppViewer::getTextureFetch())
     {
         LLAppViewer::getTextureFetch()->disableAtomicWorkerUpdates(getID());
@@ -1259,7 +1260,7 @@ void LLViewerFetchedTexture::loadFromFastCache()
     }
     mInFastCacheList = false;
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     // </FS:minerjr> [FIRE-35011]
     add(LLTextureFetch::sCacheAttempt, 1.0);
 
@@ -1431,7 +1432,7 @@ void LLViewerFetchedTexture::addToCreateTexture()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     // </FS:minerjr> [FIRE-35011]
     bool force_update = false;
     if (getComponents() != mRawImage->getComponents())
@@ -1951,7 +1952,7 @@ void LLViewerFetchedTexture::setBoostLevel(S32 level)
 bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 current_discard, S32 fetch_discard, F32 decode_priority)
 {
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     // </FS:minerjr> [FIRE-35011]
     // We may have data ready regardless of whether or not we are finished (e.g. waiting on write)
     if (mRawImage.notNull())
@@ -2369,7 +2370,7 @@ bool LLViewerFetchedTexture::updateFetch()
             // bake textures are always at discard 0
             mRequestedDiscardLevel = llmin(desired_discard, fetch_request_response);
 
-            if (fs_performance_additions >= 2)
+            if (fs_performance_additions < 2)
             mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
                                                        mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
         }

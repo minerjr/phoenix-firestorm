@@ -1179,7 +1179,6 @@ void LLTextureFetchWorker::updateCurrentTextureWorkerState()
 }
 // </FS:minerjr>
 
-// 
 // Threads:  Ttf
 bool LLTextureFetchWorker::doWork(S32 param)
 {
@@ -3195,7 +3194,6 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->setCanUseHTTP(can_use_http) ;
         worker->unlockWorkMutex();                                      // -Mw
     }
-
 
     LL_DEBUGS(LOG_TXT) << "REQUESTED: " << id << " f_type " << fttype_to_string(f_type)
                        << " Discard: " << desired_discard << " size " << desired_size << LL_ENDL;

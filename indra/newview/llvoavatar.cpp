@@ -11870,7 +11870,7 @@ void LLVOAvatar::updateImpostors(F32 max_time)
         last_processed_imposter = 0;
     }
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     // </FS:minerjr> [FIRE-35011]
     int index = 0;
     for (index = last_processed_imposter; index < LLCharacter::sInstances.size(); index++)

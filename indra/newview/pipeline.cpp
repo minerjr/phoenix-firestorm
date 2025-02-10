@@ -11102,7 +11102,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     LL_PROFILE_GPU_ZONE("generateImpostor");
     // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     // </FS:minerjr> [FIRE-35011]
     // If there is not enough texture RAM, this will ultimatly fail as there the buffer allocation will fail in the end
     if (LLViewerTexture::sDesiredDiscardBias > 2.0f && fs_performance_additions >= 4) return;
