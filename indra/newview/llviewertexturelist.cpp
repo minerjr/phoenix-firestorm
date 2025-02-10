@@ -1247,7 +1247,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     // <FS:minerjr>
-    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
     if (fs_performance_additions >= 3)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;

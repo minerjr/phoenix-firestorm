@@ -38,6 +38,9 @@ class LLViewerRegion;
 class LLVOPartGroup;
 
 #define LL_MAX_PARTICLE_COUNT 8192
+// <FS:minerjr>
+#define LL_DELAY_AFTER_NO_PARTICLES 10.0f
+// </FS:minerjr>
 
 typedef void (*LLVPCallback)(LLViewerPart &part, const F32 dt);
 
@@ -56,6 +59,9 @@ public:
 
     void init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *imagep, LLVPCallback cb);
 
+    // <FS:minerjr>
+    void release();
+    // </FS:minerjr>
 
     U32                 mPartID;                    // Particle ID used primarily for moving between groups
     F32                 mLastUpdateTime;            // Last time the particle was updated
@@ -122,6 +128,9 @@ public:
 
     F32 mSkippedTime;
     bool mHud;
+    // <FS:minerjr>
+    F32  mLastParticleAliveTime;
+    // </FS:minerjr>
 
 protected:
     LLVector3 mCenterAgent;
@@ -153,7 +162,9 @@ public:
     void cleanupRegion(LLViewerRegion *regionp);
 
     static bool shouldAddPart(); // Just decides whether this particle should be added or not (for particle count capping)
-    F32 maxRate() // Return maximum particle generation rate
+    //</FS:minerjr>
+	/*
+	F32 maxRate() // Return maximum particle generation rate
     {
         if (sParticleCount >= MAX_PART_COUNT)
         {
@@ -165,6 +176,9 @@ public:
         }
         return 0.f;
     }
+	*/
+	F32 maxRate(); // Return maximum particle generation rate  
+	// </FS:minerjr>
     F32 getRefRate() { return sParticleAdaptiveRate; }
     F32 getBurstRate() {return sParticleBurstRate; }
     void addPart(LLViewerPart* part);
@@ -175,9 +189,18 @@ public:
 
     const source_list_t* getParticleSystemList() const { return &mViewerPartSources; }
 
+    // <FS:minerjr>
+    LLViewerPart* getFreeParticle();
+    bool releaseParticle(LLViewerPart* part);
+    bool releaseParticles(LLViewerPartGroup::part_list_t removeList);
+    // </FS:minerjr>
+
     friend class LLViewerPartGroup;
 
-    bool aboveParticleLimit() const { return sParticleCount > sMaxParticleCount; }
+    // <FS:minerjr>
+	//bool aboveParticleLimit() const { return sParticleCount > sMaxParticleCount; }
+	bool aboveParticleLimit() const;
+	// </FS:minerjr>
     static void setMaxPartCount(const S32 max_parts)    { sMaxParticleCount = max_parts; }
     static S32  getMaxPartCount()                       { return sMaxParticleCount; }
 
@@ -195,6 +218,9 @@ protected:
     group_list_t mViewerPartGroups;
     source_list_t mViewerPartSources;
     LLFrameTimer mSimulationTimer;
+    // <FS:minerjr>
+    static LLViewerPartGroup::part_list_t mParticlesPool;
+    // </FS:minerjr>
 
     static S32 sMaxParticleCount;
     static std::atomic<S32> sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch

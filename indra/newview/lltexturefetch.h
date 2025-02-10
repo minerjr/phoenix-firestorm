@@ -110,6 +110,11 @@ public:
     // Threads:  T*
     bool updateRequestPriority(const LLUUID& id, F32 priority);
 
+    // <FS:minerjr>
+    // Disables the atomic worker updates so that the threads can clean up
+    bool disableAtomicWorkerUpdates(const LLUUID& id);
+    // </FS:minerjr>
+
     // <FS:Ansariel> OpenSim compatibility
     // Threads:  T*
     bool receiveImageHeader(const LLHost& host, const LLUUID& id, U8 codec, U16 packets, U32 totalbytes, U16 data_size, U8* data);

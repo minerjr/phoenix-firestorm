@@ -62,8 +62,11 @@ const F32 LLViewerPartSim::PART_ADAPT_RATE_MULT = 2.0f;
 const F32 LLViewerPartSim::PART_THROTTLE_RESCALE = PART_THROTTLE_THRESHOLD / (1.0f-PART_THROTTLE_THRESHOLD);
 const F32 LLViewerPartSim::PART_ADAPT_RATE_MULT_RECIP = 1.0f/PART_ADAPT_RATE_MULT;
 
-
-U32 LLViewerPart::sNextPartID = 1;
+// <FS:minerjr>
+//U32 LLViewerPart::sNextPartID = 1;
+LLViewerPartGroup::part_list_t LLViewerPartSim::mParticlesPool;
+U32 LLViewerPart::sNextPartID = 0;
+// </FS:minerjr>
 
 F32 calc_desired_size(LLViewerCamera* camera, LLVector3 pos, LLVector2 scale)
 {
@@ -72,17 +75,22 @@ F32 calc_desired_size(LLViewerCamera* camera, LLVector3 pos, LLVector2 scale)
     return llclamp(desired_size, scale.magVec()*0.5f, PART_SIM_BOX_SIDE*2);
 }
 
-LLViewerPart::LLViewerPart() :
-    mPartID(0),
+LLViewerPart::LLViewerPart() :    
     mLastUpdateTime(0.f),
     mSkipOffset(0.f),
     mVPCallback(NULL),
-    mImagep(NULL)
+    mImagep(NULL),
+    mStartGlow(0.0f),
+    mEndGlow(0.0f)
 {
     mPartSourcep = NULL;
     mParent = NULL;
     mChild = NULL;
-    ++LLViewerPartSim::sParticleCount2 ;
+    // <FS:minerjr>
+    mPartID = LLViewerPart::sNextPartID;
+    LLViewerPart::sNextPartID++;
+    // </FS:minerjr>
+    //++LLViewerPartSim::sParticleCount2 ;
 }
 
 LLViewerPart::~LLViewerPart()
@@ -107,13 +115,15 @@ LLViewerPart::~LLViewerPart()
 
     mPartSourcep = NULL;
 
-    --LLViewerPartSim::sParticleCount2 ;
+    //--LLViewerPartSim::sParticleCount2 ;
 }
 
 void LLViewerPart::init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *imagep, LLVPCallback cb)
 {
-    mPartID = LLViewerPart::sNextPartID;
-    LLViewerPart::sNextPartID++;
+    // <FS:minerjr>
+    //mPartID = LLViewerPart::sNextPartID;
+    //LLViewerPart::sNextPartID++;
+    // </FS:minerjr>
     mFlags = 0x00f;
     mLastUpdateTime = 0.f;
     mMaxAge = 10.f;
@@ -125,6 +135,67 @@ void LLViewerPart::init(LLPointer<LLViewerPartSource> sourcep, LLViewerTexture *
     mImagep = imagep;
 }
 
+// <FS:minerjr>
+void LLViewerPart::release()
+{
+    if (mPartSourcep.notNull() && mPartSourcep->mLastPart == this)
+    {
+        mPartSourcep->mLastPart = NULL;
+    }
+
+    // patch up holes in the ribbon
+    if (mParent)
+    {
+        llassert(mParent->mChild == this);
+        mParent->mChild = mChild;
+    }
+
+    if (mChild)
+    {
+        llassert(mChild->mParent == this);
+        mChild->mParent = mParent;
+    }
+
+    mPartSourcep = NULL;
+
+    mFlags = 0;      // Particle state/interpolators in effect
+    mMaxAge = 0.0f;     // Maximum age of the particle
+    mStartColor.setToBlack(); // Start color
+    mEndColor.setToBlack();   // End color
+    mStartScale.clear(); // Start scale
+    mEndScale.clear();   // End scale
+
+    mPosOffset.clear(); // Offset from source if using FOLLOW_SOURCE
+    mParameter = 0.0f; // A single floating point parameter
+
+    mStartGlow = 0.0f;
+    mEndGlow = 0.0f;
+
+    mBlendFuncSource = 0;
+    mBlendFuncDest = 0;
+
+    mLastUpdateTime = 0.0f; // Last time the particle was updated
+    mSkipOffset = 0.0f ;// Offset against current group mSkippedTime
+
+    mVPCallback = NULL;  // Callback function for more complicated behaviors    
+
+    mParent = NULL; // particle to connect to if this is part of a particle ribbon
+    mChild = NULL; // child particle for clean reference destruction
+
+    // Current particle state (possibly used for rendering)
+    mImagep = NULL;
+    mPosAgent.clear();
+    mVelocity.clear();
+    mAccel.clear();
+    mAxis.clear();
+    mColor.setToBlack();
+    mScale.clear();
+    mStartGlow = 0.0f;
+    mEndGlow = 0.0f;
+    mGlow.setToBlack();
+    //--LLViewerPartSim::sParticleCount2;
+}
+// </FS:minerjr>
 
 /////////////////////////////
 //
@@ -138,6 +209,10 @@ LLViewerPartGroup::LLViewerPartGroup(const LLVector3 &center_agent, const F32 bo
 {
     mVOPartGroupp = NULL;
     mUniformParticles = true;
+    // <FS:minerjr>
+    // Reserve a vector the size of the entire max count, to try to 
+    mParticles.reserve(LLViewerPartSim::MAX_PART_COUNT);
+    // </FS:minerjr>
 
     mRegionp = LLWorld::getInstance()->getRegionFromPosAgent(center_agent);
     llassert_always(center_agent.isFinite());
@@ -199,13 +274,17 @@ LLViewerPartGroup::~LLViewerPartGroup()
     cleanup();
 
     S32 count = (S32) mParticles.size();
-    for(S32 i = 0 ; i < count ; i++)
-    {
-        delete mParticles[i] ;
-    }
+    // <FS:minerjr>
+    //for(S32 i = 0 ; i < count ; i++)
+    //{
+    //    delete mParticles[i];        
+    //}
+    LLViewerPartSim::getInstance()->releaseParticles(mParticles);
+    // </FS:minerjr>
     mParticles.clear();
-
-    LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // <FS:minerjr>
+    //LLViewerPartSim::sParticleCount -= count; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // </FS:minerjr>
 }
 
 void LLViewerPartGroup::cleanup()
@@ -268,7 +347,9 @@ bool LLViewerPartGroup::addPart(LLViewerPart* part, F32 desired_size)
 
     mParticles.push_back(part);
     part->mSkipOffset=mSkippedTime;
-    ++LLViewerPartSim::sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // <FS:minerjr>
+    //++LLViewerPartSim::sParticleCount; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
+    // </FS:minerjr>
     return true;
 }
 
@@ -278,9 +359,9 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     F32 dt;
 
     LLVector3 gravity(0.f, 0.f, GRAVITY);
-
-    LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
-
+    // <FS:minerjr>
+    //LLViewerPartSim::checkParticleCount(static_cast<U32>(mParticles.size()));
+    // </FS:minerjr>
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     LLViewerRegion *regionp = getRegion();
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch    
@@ -407,8 +488,13 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
             // mParticles.pop_back() ;
             // delete part ;
             vector_replace_with_last(mParticles, mParticles.begin() + i);
-            --LLViewerPartSim::sParticleCount; 
-            delete part ;
+            // <FS:minerjr>
+            //--LLViewerPartSim::sParticleCount;             
+            //delete part ;
+            // Relase the particle
+            static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+            LLViewerPartSim::getInstance()->releaseParticle(part);
+            // </FS:minerjr>
             changed = true; 
             // </FS:Beq>
         }
@@ -427,7 +513,9 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
                 // Note: put() uses addpart when succesful, this increase sParticleCount by 1
                 // even though it has stayed the same. If it is not succesful then we need to decrease by 1
                 // so a decrement here works for both cases.
-                --LLViewerPartSim::sParticleCount; 
+                // <FS:minerjr>
+                //--LLViewerPartSim::sParticleCount;
+                // </FS:minerjr>
                 changed = true;
                 // </FS:Beq>
             }
@@ -436,6 +524,7 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
                 i++ ;
             }
         }
+        mLastParticleAliveTime = 0.0f;
     }
 
     // <FS:Beq> FIRE-34600 - Bugsplat AVX2 particle count mismatch
@@ -461,11 +550,26 @@ void LLViewerPartGroup::updateParticles(const F32 lastdt)
     // Kill the viewer object if this particle group is empty
     if (mParticles.empty())
     {
-        gObjectList.killObject(mVOPartGroupp);
-        mVOPartGroupp = NULL;
+        // <FS:minerjr>
+        //gObjectList.killObject(mVOPartGroupp);
+        //mVOPartGroupp = NULL;
+        // If the time since the last particles was alive is longer then the max delaye
+        if (mLastParticleAliveTime < LL_DELAY_AFTER_NO_PARTICLES)
+        {
+            // Add the current elapsed time to the last particle alive time
+            mLastParticleAliveTime += lastdt;
+        }
+        // Else, no particles have been added to this group in the LL_DELAY_AFTER_NO_PARTICLES time, so it can be killed
+        else
+        {
+            gObjectList.killObject(mVOPartGroupp);
+            mVOPartGroupp = NULL;
+        }
     }
-
-    LLViewerPartSim::checkParticleCount() ;
+    // <FS:minerjr>
+    //LLViewerPartSim::checkParticleCount() ;
+    // </FS:minerjr>
+    
 }
 
 
@@ -511,6 +615,7 @@ void LLViewerPartSim::checkParticleCount(U32 size)
     // {
     //     LL_ERRS() << "current particle size: " << LLViewerPartSim::sParticleCount2 << " array size: " << size << LL_ENDL ; // <FS:Beq/> FIRE-34600 - bugsplat AVX2 particle count mismatch
     // }
+    return;
     if(LLViewerPartSim::sParticleCount2 != LLViewerPartSim::sParticleCount)
     {
         static int fail_count{0};
@@ -546,6 +651,16 @@ LLViewerPartSim::LLViewerPartSim()
     sMaxParticleCount = llmin(gSavedSettings.getS32("RenderMaxPartCount"), LL_MAX_PARTICLE_COUNT);
     static U32 id_seed = 0;
     mID = ++id_seed;
+    // <FS:minerjr>
+    mParticlesPool.reserve(LLViewerPartSim::MAX_PART_COUNT);
+    for (int x = 0; x < LLViewerPartSim::MAX_PART_COUNT; x++)
+    {
+        mParticlesPool.push_back(new LLViewerPart());
+    }
+    
+    sParticleCount = 0;
+    sParticleCount2 = 0;
+    // </FS:minerjr>
 }
 
 //enable/disable particle system
@@ -578,19 +693,30 @@ void LLViewerPartSim::destroyClass()
 
     // Kill all of the sources
     mViewerPartSources.clear();
+    // <FS:minerjr>
+    // Erase the pool of particles
+    count = (S32)mParticlesPool.size();
+    for (i = 0; i < count; i++)
+    {
+        delete mParticlesPool[i];
+    }
+    mParticlesPool.clear();
+    // </FS:minerjr>
 }
 
 //static
 bool LLViewerPartSim::shouldAddPart()
 {
-    if (sParticleCount >= MAX_PART_COUNT)
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", 0);
+    S32 particleCount = fs_performance_additions >= 5 ? sParticleCount : sParticleCount2;
+    if (particleCount >= MAX_PART_COUNT)
     {
         return false;
     }
 
-    if ( sParticleCount > PART_THROTTLE_THRESHOLD*sMaxParticleCount)
+    if (particleCount > PART_THROTTLE_THRESHOLD * sMaxParticleCount)
     {
-        F32 frac = (F32)sParticleCount/(F32)sMaxParticleCount;
+        F32 frac = (F32)particleCount/(F32)sMaxParticleCount;
         frac -= PART_THROTTLE_THRESHOLD;
         frac *= PART_THROTTLE_RESCALE;
         if (ll_frand() < frac)
@@ -609,7 +735,8 @@ bool LLViewerPartSim::shouldAddPart()
 
     return true;
 }
-
+// <FS:minerjr>
+/*
 void LLViewerPartSim::addPart(LLViewerPart* part)
 {
     if (LLViewerPartSim::sParticleCount < MAX_PART_COUNT)
@@ -623,7 +750,28 @@ void LLViewerPartSim::addPart(LLViewerPart* part)
         part = NULL ;
     }
 }
-
+*/
+// Checks to see if a parcile can be added
+void LLViewerPartSim::addPart(LLViewerPart* part)
+{
+    // Can only get a pointer to a viewer particle if there is a free particle
+    // So if the pointer is not NULL, it should be valid
+    if (part != NULL)
+    {
+        static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+        S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+        if (particleCount < MAX_PART_COUNT)
+        {
+            // Add the particle to one of the groups
+            put(part);
+        }
+        else if (!mbUseParticlePool)
+        {
+            releaseParticle(part);
+        }
+    }
+}
+// </FS:minerjr>
 
 LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
 {
@@ -675,8 +823,12 @@ LLViewerPartGroup *LLViewerPartSim::put(LLViewerPart* part)
 
     if(!return_group) //failed to insert the particle
     {
-        delete part ;
-        part = NULL ;
+        // <FS:minerjr>
+        //delete part ;
+        //part = NULL ;
+        // Release the particle to the be re-used
+        LLViewerPartSim::getInstance()->releaseParticle(part);
+        // </FS:minerjr>
     }
 
     return return_group ;
@@ -718,7 +870,7 @@ void LLViewerPartSim::updateSimulation()
 {
     static LLFrameTimer update_timer;
 
-    const F32 dt = llmin(update_timer.getElapsedTimeAndResetF32(), 0.1f);
+    const F32 dt = llmin(update_timer.getElapsedTimeAndResetF32(), 0.2f);
 
     // <FS:LO> Dont suspend partical processing while particles are hidden, just skip over drawing them
     /*if (!(gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES)))
@@ -830,7 +982,10 @@ void LLViewerPartSim::updateSimulation()
             }
             mViewerPartGroups[i]->updateParticles(dt * visirate);
             mViewerPartGroups[i]->mSkippedTime=0.0f;
-            if (!mViewerPartGroups[i]->getCount())
+            // <FS:minerjr>
+            //if (!mViewerPartGroups[i]->getCount())
+            if (!mViewerPartGroups[i]->getCount() && mViewerPartGroups[i]->mLastParticleAliveTime >= LL_DELAY_AFTER_NO_PARTICLES)
+            // </FS:minerjr>
             {
                 delete mViewerPartGroups[i];
                 mViewerPartGroups.erase(mViewerPartGroups.begin() + i);
@@ -844,16 +999,18 @@ void LLViewerPartSim::updateSimulation()
         }
 
     }
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
     if (LLDrawable::getCurrentFrame()%16==0)
     {
-        if (sParticleCount > sMaxParticleCount * 0.875f
+        if (particleCount > sMaxParticleCount * 0.875f
              && sParticleAdaptiveRate < 2.0f)
         {
             sParticleAdaptiveRate *= PART_ADAPT_RATE_MULT;
         }
         else
         {
-            if ( sParticleCount < sMaxParticleCount * 0.5f
+            if (particleCount < sMaxParticleCount * 0.5f
                 && sParticleAdaptiveRate > 0.03125f)
             {
                 sParticleAdaptiveRate *= PART_ADAPT_RATE_MULT_RECIP;
@@ -868,17 +1025,19 @@ void LLViewerPartSim::updateSimulation()
 
 void LLViewerPartSim::updatePartBurstRate()
 {
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
     if (!(LLDrawable::getCurrentFrame() & 0xf))
     {
-        if (sParticleCount >= MAX_PART_COUNT) //set rate to zero
+        if (particleCount >= MAX_PART_COUNT) // set rate to zero
         {
             sParticleBurstRate = 0.0f ;
         }
-        else if(sParticleCount > 0)
+        else if (particleCount > 0)
         {
             if(sParticleBurstRate > 0.0000001f)
             {
-                F32 total_particles = sParticleCount / sParticleBurstRate ; //estimated
+                F32 total_particles = particleCount / sParticleBurstRate; // estimated
                 F32 new_rate = llclamp(0.9f * sMaxParticleCount / total_particles, 0.0f, 1.0f) ;
                 F32 delta_rate_threshold = llmin(0.1f * llmax(new_rate, sParticleBurstRate), 0.1f) ;
                 F32 delta_rate = llclamp(new_rate - sParticleBurstRate, -1.0f * delta_rate_threshold, delta_rate_threshold) ;
@@ -955,3 +1114,117 @@ void LLViewerPartSim::clearParticlesByOwnerID(const LLUUID& task_id)
     }
 }
 
+// <FS:minerjr>
+// Tries to return the pointe to the next free particle
+LLViewerPart* LLViewerPartSim::getFreeParticle()
+{
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    if (!mbUseParticlePool)
+    {
+        sParticleCount2++;
+        return new LLViewerPart();
+    }
+    LLViewerPart* returnParticle = NULL;
+    // First check to see if the particle count is less then the max
+    if (sParticleCount < sMaxParticleCount)
+    {
+        // If it is, get the pointer to the next free particle
+        returnParticle = mParticlesPool[sParticleCount];
+        // Increase the particle count by 1
+        sParticleCount++;
+    }
+
+    return returnParticle;
+}
+
+bool LLViewerPartSim::releaseParticle(LLViewerPart* part)
+{
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    //if (!mbUseParticlePool)
+    //{
+    //    sParticleCount2--;
+    //    delete part;
+    //    return true;        
+    //}
+    // If the particle is valid
+    if (part != NULL)
+    {
+        if (part->mPartID > LL_MAX_PARTICLE_COUNT)
+        {
+            sParticleCount2--;
+            delete part;
+            return true;   
+        }
+        // We want to swap the current particle with the last valid particle
+        if (sParticleCount > 0)
+        {
+            // Store the old and last IDs
+            U32 oldID  = part->mPartID;
+            U32 lastID = sParticleCount - 1;
+            // Get the pointer to the last particle
+            LLViewerPart* lastParticle = mParticlesPool[lastID];
+            // Swap the two points, as we only store points in the vector
+            mParticlesPool[oldID]      = lastParticle;
+            mParticlesPool[lastID]     = part;
+
+            // Swap the IDs as well
+            mParticlesPool[oldID]->mPartID = oldID;
+            mParticlesPool[lastID]->mPartID = lastID;
+
+            // Set the last ID to dead, just in case
+            mParticlesPool[lastID]->mFlags = LLViewerPart::LL_PART_DEAD_MASK;
+
+            // Call the release on the particle (same as the old deconstructor)
+            // to update the parent and child pointers
+            mParticlesPool[lastID]->release();
+
+            // Decrease the particle count by 1
+            sParticleCount--;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    return false;    
+}
+
+bool LLViewerPartSim::releaseParticles(LLViewerPartGroup::part_list_t removeList)
+{
+    // Get an iterator for the removal list
+    LLViewerPartGroup::part_list_t::iterator iter = removeList.begin();
+    // Loop over all the lists
+    while (iter != removeList.end())
+    {
+        // Relase the current iterator
+        releaseParticle(*iter);
+        // Go on to the next particle
+        iter++;
+    }
+
+    return true;
+}
+
+F32 LLViewerPartSim::maxRate() // Return maximum particle generation rate
+{
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    if (particleCount >= MAX_PART_COUNT)
+    {
+        return 1.f;
+    }
+    if (particleCount > PART_THROTTLE_THRESHOLD * sMaxParticleCount)
+    {
+        return (((F32)particleCount / (F32)sMaxParticleCount) - PART_THROTTLE_THRESHOLD) * PART_THROTTLE_RESCALE;
+    }
+    return 0.f;
+}
+
+bool LLViewerPartSim::aboveParticleLimit() const
+{
+    static LLCachedControl<bool> mbUseParticlePool(gSavedSettings, "FSUseParticlePool");
+    S32 particleCount = mbUseParticlePool ? sParticleCount : sParticleCount2;
+    return particleCount > sMaxParticleCount;
+}
+// </FS:minerjr>

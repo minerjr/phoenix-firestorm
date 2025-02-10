@@ -301,7 +301,16 @@ void LLViewerPartSourceScript::update(const F32 dt)
                 continue;
             }
 
-            LLViewerPart* part = new LLViewerPart();
+            // <FS:minerjr>
+            //LLViewerPart* part = new LLViewerPart();
+            // Try to get a free particle
+            LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+            // If there are no free particles, we can break
+            if (part == NULL)
+            {
+                break;
+            }
+            // </FS:minerjr>
 
             part->init(this, mImagep, NULL);
             part->mFlags = mPartSysData.mPartData.mFlags;
@@ -633,17 +642,31 @@ void LLViewerPartSourceSpiral::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
+        */
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            // Particle simulation says we have too many particles, skip all this
+            return;
+        }
+        // </FS:minerjr>
 
         if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
         {
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        //LLViewerPart* part = new LLViewerPart();
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;
         part->mEndColor = mColor;
@@ -781,18 +804,32 @@ void LLViewerPartSourceBeam::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
+        */        
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            // Particle simulation says we have too many particles, skip all this
+            return;
+        }
+        // </FS:minerjr>
 
         if (!mImagep)
         {
             mImagep = LLViewerFetchedTexture::sDefaultParticleImagep;
         }
 
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        //LLViewerPart* part = new LLViewerPart();
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
 
         part->mFlags = LLPartData::LL_PART_INTERP_COLOR_MASK |
@@ -900,17 +937,31 @@ void LLViewerPartSourceChat::update(const F32 dt)
     if (dt_update > RATE)
     {
         mLastPartTime = mLastUpdateTime;
+        // <FS:minerjr>
+        /*
         if (!LLViewerPartSim::getInstance()->shouldAddPart())
         {
             // Particle simulation says we have too many particles, skip all this
             return;
         }
+        */
+        // Try to get a free particle
+        LLViewerPart* part = LLViewerPartSim::getInstance()->getFreeParticle();
+        // If there are no free particles, we can exit
+        if (part == NULL)
+        {
+            // Particle simulation says we have too many particles, skip all this
+            return;
+        }
+        // </FS:minerjr>
 
         if (!mSourceObjectp.isNull() && !mSourceObjectp->mDrawable.isNull())
         {
             mPosAgent = mSourceObjectp->getRenderPosition();
         }
-        LLViewerPart* part = new LLViewerPart();
+        // <FS:minerjr>
+        //LLViewerPart* part = new LLViewerPart();       
+        // </FS:minerjr>
         part->init(this, mImagep, updatePart);
         part->mStartColor = mColor;
         part->mEndColor = mColor;

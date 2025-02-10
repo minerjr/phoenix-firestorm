@@ -449,7 +449,9 @@ public:
     // <FS:minerjr>
     LLAtomicU64& mAtomicWorkerThreadState; // Update the Worker Thread State for the caller texture
     PackedTextureWorkerData mCurrentTextureWorkerState; // Used for parsing the Worker Thread State
-    // </FS:minerjr>
+    mutable bool mbUseAtomicFeedback;
+    // Disable the atomic value feedback
+    void disableAtomicWorkerUpdates() { mbUseAtomicFeedback = false; }
 protected:
     LLTextureFetchWorker(LLTextureFetch* fetcher, FTType f_type,
                          const std::string& url, const LLUUID& id, const LLHost& host,
@@ -970,7 +972,8 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mFetchRetryPolicy(10.f,3600.f,2.f,10),
       mCanUseCapability(true),
       mRegionRetryAttempt(0),      
-      mAtomicWorkerThreadState(atomic_packed_texture_data)
+      mAtomicWorkerThreadState(atomic_packed_texture_data),
+      mbUseAtomicFeedback(true)
 {
     // <FS:Ansariel> OpenSim compatibility
     mCanUseNET = !LLGridManager::instance().isInSecondLife() && mUrl.empty() ;
@@ -989,7 +992,12 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
     mCurrentTextureWorkerState.Accessors.mHostIP = host.getAddress();
     mCurrentTextureWorkerState.Accessors.mHostPort = host.getPort();
     // And store it in the atomic value, now when a value changes, we update the atomic state
-    mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+    // Check if we can use the feedback, in case the parent texture was deleted
+    if (mbUseAtomicFeedback)
+    {
+        // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
+        mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+    }
     // </FS:minerjr>
 }
 
@@ -1162,7 +1170,12 @@ void LLTextureFetchWorker::updateCurrentTextureWorkerState()
     mCurrentTextureWorkerState.Accessors.mIsWorking = isWorking();
     mCurrentTextureWorkerState.Accessors.mWasAborted = wasAborted();
     // And store it in the atomic value of the new state, for the invoker texture.
-    mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;    
+    // Check if we can use the feedback, in case the parent texture was deleted
+    if (mbUseAtomicFeedback)
+    {
+        // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
+        mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+    }
 }
 // </FS:minerjr>
 
@@ -2550,21 +2563,16 @@ bool LLTextureFetchWorker::deleteOK()
     }
     // <FS:minerjr>
     if (delete_ok)
-    {        
+    {
+        //std::exception_ptr eptr;
         // Set the current texture worker state to an invalid value to inidicate that there is no no worker thread assigned the texture
-        if (getFlags(LLWorkerClass::WCF_DELETE_REQUESTED))
+        mCurrentTextureWorkerState.Accessors.mState = DONE + 1;
+        // Check if we can use the feedback, in case the parent texture was deleted
+        if (mbUseAtomicFeedback)
         {
-            mCurrentTextureWorkerState.Accessors.mState = DONE + 1;
-            try
-            {
-                // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
-                mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
-            }
-            catch(const std::exception& error)
-            {
-                std::cout << "We got a fatal error in LLTextureFetchWorker::deleteOK: " << error.what() << '\n';
-            }
-        }       
+            // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
+            mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+        }
     }
     // </FS:minerjr>
     return delete_ok;
@@ -3034,7 +3042,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
             {
                 LL_WARNS(LOG_TXT) << "LLTextureFetch::createRequest " << id << " called with multiple hosts: "
                     << host << " != " << worker->mHost << LL_ENDL;
-                removeRequest(worker, true);
+                removeRequest(worker, true);                
                 worker = NULL;
                 return CREATE_REQUEST_ERROR_MHOSTS;
             }
@@ -3488,6 +3496,23 @@ bool LLTextureFetch::updateRequestPriority(const LLUUID& id, F32 priority)
 
     return true;
 }
+
+// <FS:minerjr>
+// Threads:  T*
+bool LLTextureFetch::disableAtomicWorkerUpdates(const LLUUID& id)
+{
+    LL_PROFILE_ZONE_SCOPED;
+
+    LLTextureFetchWorker* worker = getWorker(id);
+    if (worker)
+    {
+        worker->lockWorkMutex();                                        // +Mw
+        worker->disableAtomicWorkerUpdates();
+        worker->unlockWorkMutex();                                      // -Mw
+    }
+    return true;
+}
+// </FS:minerjr>
 
 // Replicates and expands upon the base class's
 // getPending() implementation.  getPending() and

@@ -459,7 +459,6 @@ void LLViewerTextureManager::init()
 void LLViewerTextureManager::cleanup()
 {
     stop_glerror();
-
     delete gTextureManagerBridgep;
     LLImageGL::sDefaultGLTexture = NULL;
     LLViewerTexture::sNullImagep = NULL;
@@ -733,9 +732,10 @@ S8 LLViewerTexture::getType() const
 }
 
 void LLViewerTexture::cleanup()
-{
+{    
     if (LLAppViewer::getTextureFetch())
     {
+        LLAppViewer::getTextureFetch()->disableAtomicWorkerUpdates(getID());
         LLAppViewer::getTextureFetch()->updateRequestPriority(mID, 0.f);
     }
 
@@ -1200,9 +1200,10 @@ LLViewerFetchedTexture::~LLViewerFetchedTexture()
     assert_main_thread();
     //*NOTE getTextureFetch can return NULL when Viewer is shutting down.
     // This is due to LLWearableList is singleton and is destroyed after
-    // LLAppViewer::cleanup() was called. (see ticket EXT-177)
+    // LLAppViewer::cleanup() was called. (see ticket EXT-177)    
     if (mHasFetcher && LLAppViewer::getTextureFetch())
     {
+        LLAppViewer::getTextureFetch()->disableAtomicWorkerUpdates(getID());
         LLAppViewer::getTextureFetch()->deleteRequest(getID(), true);
     }
 
