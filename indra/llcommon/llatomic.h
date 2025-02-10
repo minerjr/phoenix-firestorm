@@ -85,10 +85,10 @@ template <typename Type> class FSAtomicQueue
 public:
     struct FSAtomicQueueNode
     {
-        std::atomic<std::shared_ptr<Type>> mData;
+        std::shared_ptr<Type> mData;
         LLAtomicU64 mState;
-        std::atomic<FSAtomicQueueNode *> mNext;
-        std::atomic<FSAtomicQueueNode *> mPrev;
+        FSAtomicQueueNode *mNext;
+        FSAtomicQueueNode *mPrev;
 
         FSAtomicQueueNode(FSAtomicQueueNode&) = delete;
         void operator=(FSAtomicQueueNode&) = delete;

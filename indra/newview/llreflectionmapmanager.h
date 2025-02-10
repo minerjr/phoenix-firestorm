@@ -63,7 +63,7 @@ public:
     void cleanup();
 
     // maintain reflection probes
-    void update();
+    void update(F32 max_time);
 
     // add a probe for the given spatial group
     LLReflectionMap* addProbe(LLSpatialGroup* group = nullptr);

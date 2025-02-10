@@ -991,6 +991,12 @@ void LLViewerObjectList::update(LLAgent &agent)
     // Make a copy of the list in case something in idleUpdate() messes with it
     static std::vector<LLViewerObject*> idle_list;
 
+    if (idle_list.capacity() < mActiveObjects.size())
+    {
+        // Add an additional 1024 over the current object list to try to prevent reallocating a bunch
+        idle_list.reserve(mActiveObjects.size() + 1024);
+    }
+
     U32 idle_count = 0;
     mNumAvatars = 0;
 

@@ -91,6 +91,8 @@ public:
     void unlockExclusive();
     template<bool SHARED> void unlock();
 
+    std::mutex& getMutex() { return mLockMutex; }
+
 private:
     std::shared_mutex mSharedMutex;
     mutable std::mutex mLockMutex;
@@ -279,5 +281,9 @@ protected:
     bool mLocked;
     std::mutex* mMutex;
 };
+
+// <FS:minerjr>
+
+// </FS:minerjr>
 
 #endif // LL_LLMUTEX_H

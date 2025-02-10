@@ -1754,7 +1754,9 @@ bool LLAppViewer::doFrame()
                     LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
                     pingMainloopTimeout("Main:Snapshot");
-                    gPipeline.mReflectionMapManager.update();
+                    F32 max_reflection_map_update_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
+                    max_reflection_map_update_time = llclamp(max_reflection_map_update_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
+                    gPipeline.mReflectionMapManager.update(max_reflection_map_update_time);
                     LLFloaterSnapshot::update(); // take snapshots
                     LLFloaterSimpleSnapshot::update();
                     gGLActive = false;

@@ -29,6 +29,7 @@
 #include "llimageworker.h"
 #include "llimagedxt.h"
 #include "threadpool.h"
+#include <mutex>
 
 /*--------------------------------------------------------------------------*/
 class ImageRequest
@@ -163,11 +164,11 @@ bool ImageRequest::processRequest()
 
     const F32 decode_time_slice = 0.f; //disable time slicing
     bool done = true;
-
+    //std::scoped_lock lockImages(mFormattedImage->mDataMutex.getMutex(), mDecodedImageRaw->mDataMutex.getMutex(), mDecodedImageAux->mDataMutex.getMutex());
     LLImageDataLock lockFormatted(mFormattedImage);
     LLImageDataLock lockDecodedRaw(mDecodedImageRaw);
     LLImageDataLock lockDecodedAux(mDecodedImageAux);
-
+    
     if (!mDecodedRaw)
     {
         // Decode primary channels

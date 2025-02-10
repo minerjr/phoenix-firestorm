@@ -6829,7 +6829,7 @@ void LLViewerWindow::setup3DRender()
 {
     // setup perspective camera
     LLViewerCamera::getInstance()->setPerspective(NOT_FOR_SELECTION, mWorldViewRectRaw.mLeft, mWorldViewRectRaw.mBottom,  mWorldViewRectRaw.getWidth(), mWorldViewRectRaw.getHeight(), false, LLViewerCamera::getInstance()->getNear(), MAX_FAR_CLIP*2.f);
-    setup3DViewport();
+    //setup3DViewport(); // Redundant call as setPerspective with false for the SELECTION will setup the view already
 }
 
 void LLViewerWindow::setup3DViewport(S32 x_offset, S32 y_offset)

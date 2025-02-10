@@ -891,7 +891,29 @@ void LLVOAvatar::debugAvatarRezTime(std::string notification_name, std::string c
 //------------------------------------------------------------------------
 LLVOAvatar::~LLVOAvatar()
 {
-    sInstances.remove(this);
+    // If there is more then 1 object, then search all the objects for this object
+    if (sInstances.size() > 1)
+    {
+        // Use search to find the Avatar
+        auto found = std::find(sInstances.begin(), sInstances.end(), this);
+        // If it was found on the list
+        if (found != sInstances.end())
+        {
+            // If the found is not the last object
+            if (*found != sInstances[sInstances.size() - 1])
+            {
+                std::swap(*found, sInstances[sInstances.size() - 1]);                
+            }
+
+            sInstances.pop_back();
+        }
+    }
+    else
+    {
+        sInstances.pop_back();
+    }
+    //sInstances.erase(std::remove(sInstances.begin(), sInstances.end(), this), sInstances.end());
+    //sInstances.remove(this);
 
     if (!mFullyLoaded)
     {
@@ -11549,8 +11571,8 @@ S32 LLVOAvatar::getUnbakedPixelAreaRank()
 // static
 void LLVOAvatar::cullAvatarsByPixelArea()
 {
-    LLCharacter::sInstances.sort([](LLCharacter* lhs, LLCharacter* rhs)
-        {
+    std::sort(LLCharacter::sInstances.begin(), LLCharacter::sInstances.end(), [](LLCharacter* lhs, LLCharacter* rhs)
+        {            
             return ((LLVOAvatar*)lhs)->mVisibilityPreference > ((LLVOAvatar*)rhs)->mVisibilityPreference;
         });
 
@@ -11837,22 +11859,54 @@ U32 LLVOAvatar::getPartitionType() const
 }
 
 //static
-void LLVOAvatar::updateImpostors()
+void LLVOAvatar::updateImpostors(F32 max_time)
 {
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-
-    for (LLCharacter* character : LLCharacter::sInstances)
+    LLTimer timer;
+    static S32 last_processed_imposter = 0;
+    //for (LLCharacter* character : LLCharacter::sInstances)
+    if (last_processed_imposter >= LLCharacter::sInstances.size())
     {
-        LLVOAvatar* avatar = (LLVOAvatar*)character;
-        if (!avatar->isDead()
+        last_processed_imposter = 0;
+    }
+    // <FS:minerjr> [FIRE-35011] Weird patterned extreme CPU usage when using more than 6gb vram on 10g card
+    static LLCachedControl<U32> fs_performance_additions(gSavedSettings,"FSPerformanceAdditions", false);
+    // </FS:minerjr> [FIRE-35011]
+    int index = 0;
+    for (index = last_processed_imposter; index < LLCharacter::sInstances.size(); index++)
+    {
+        LLVOAvatar* avatar = (LLVOAvatar*)LLCharacter::sInstances[index];
+        if (avatar && !avatar->isDead()
             && avatar->isVisible()
             && avatar->isImpostor()
-            && avatar->needsImpostorUpdate())
+            && avatar->needsImpostorUpdate()
+            && avatar->isFullyLoaded()
+            && avatar->isFullyBaked()
+            && avatar->isFullyTextured())
         {
             avatar->calcMutedAVColor();
             gPipeline.generateImpostor(avatar);
         }
+
+        if (index + 1 >=  LLCharacter::sInstances.size())
+        {
+            index = 0;
+        }
+        else
+        {
+            index++;
+        }
+        // If we looped back, then break out
+        if (index == last_processed_imposter)
+        {
+            break;
+        }
+        if (timer.getElapsedTimeF32() > max_time && fs_performance_additions >= 4)
+        {
+            break;
+        }
     }
+    last_processed_imposter = index;
 
     LLCharacter::sAllowInstancesChange = true;
 }

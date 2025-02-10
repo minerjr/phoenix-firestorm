@@ -90,6 +90,7 @@ S32 LLViewerTexture::sRawCount = 0;
 S32 LLViewerTexture::sAuxCount = 0;
 LLFrameTimer LLViewerTexture::sEvaluationTimer;
 F32 LLViewerTexture::sDesiredDiscardBias = 0.f;
+F32 LLViewerTexture::sPreviousDesiredDiscardBias = 0.f;
 
 S32 LLViewerTexture::sMaxSculptRez = 128; //max sculpt image size
 constexpr S32 MAX_CACHED_RAW_IMAGE_AREA = 64 * 64;
@@ -507,14 +508,22 @@ void LLViewerTexture::updateClass()
         tester->update();
     }
 
+    // <FS:minerjr>
+    // Save the current previous sDesiredDiscardBias so we can compare it for other code.
+    sPreviousDesiredDiscardBias = sDesiredDiscardBias;
+    // </FS:minerjr>
+
     LLViewerMediaTexture::updateClass();
 
     static LLCachedControl<U32> max_vram_budget(gSavedSettings, "RenderMaxVRAMBudget", 0);
     static LLCachedControl<bool> max_vram_budget_enabled(gSavedSettings, "FSLimitTextureVRAMUsage", false); // <FS:Ansariel> Expose max texture VRAM setting
 
-    F64 texture_bytes_alloc = LLImageGL::getTextureBytesAllocated() / 1024.0 / 512.0;
-    F64 vertex_bytes_alloc = LLVertexBuffer::getBytesAllocated() / 1024.0 / 512.0;
-
+    // <FS:minerjr>
+    // Hopefull the compliler would get this, but just in case it did not
+    F64 texture_bytes_alloc = (F64)(LLImageGL::getTextureBytesAllocated() >> 19); // / 1024.0 / 512.0;
+    F64 vertex_bytes_alloc = (F64)(LLVertexBuffer::getBytesAllocated() >> 19); // / 1024.0 / 512.0;
+    // </FS:minerjr>
+    
     // get an estimate of how much video memory we're using
     // NOTE: our metrics miss about half the vram we use, so this biases high but turns out to typically be within 5% of the real number
     F32 used = (F32)ll_round(texture_bytes_alloc + vertex_bytes_alloc);

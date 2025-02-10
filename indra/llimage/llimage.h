@@ -174,7 +174,7 @@ private:
     bool mBadBufferAllocation;
     bool mAllowOverSize;
 
-private:
+public:
     mutable LLSharedMutex mDataMutex;
 
 public:

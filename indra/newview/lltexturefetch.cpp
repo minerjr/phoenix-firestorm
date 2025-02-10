@@ -2548,20 +2548,25 @@ bool LLTextureFetchWorker::deleteOK()
     {
         delete_ok = false;
     }
-
+    // <FS:minerjr>
     if (delete_ok)
-    {
-        // <FS:minerjr>
+    {        
         // Set the current texture worker state to an invalid value to inidicate that there is no no worker thread assigned the texture
         if (getFlags(LLWorkerClass::WCF_DELETE_REQUESTED))
         {
             mCurrentTextureWorkerState.Accessors.mState = DONE + 1;
-            // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
-            mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
-        }
-        // </FS:minerjr>
+            try
+            {
+                // And store it in the atomic value, to indicate to to the invoker texture that is worker is deleted
+                mAtomicWorkerThreadState = mCurrentTextureWorkerState.Data;
+            }
+            catch(const std::exception& error)
+            {
+                std::cout << "We got a fatal error in LLTextureFetchWorker::deleteOK: " << error.what() << '\n';
+            }
+        }       
     }
-
+    // </FS:minerjr>
     return delete_ok;
 }
 

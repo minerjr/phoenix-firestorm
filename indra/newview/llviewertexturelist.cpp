@@ -1268,7 +1268,8 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size()/20);
         // <FS:minerjr>
         //if (LLViewerTexture::sDesiredDiscardBias > 1.f)
-        if (LLViewerTexture::sDesiredDiscardBias > 1.f)
+        // Only add more if there is a increase in the bias
+        if (LLViewerTexture::sPreviousDesiredDiscardBias < LLViewerTexture::sDesiredDiscardBias)
         {
             // we are over memory target, update more agresively
             update_count = (S32)(update_count * LLViewerTexture::sDesiredDiscardBias);
