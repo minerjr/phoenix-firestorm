@@ -707,6 +707,9 @@ void LLGLTexMemBar::draw()
 
     //----------------------------------------------------------------------------
 
+
+
+#ifdef OPENSIM
     // <FS:Ansariel> Fast cache stats
     //text = llformat("Textures: %d Fetch: %d(%d) Pkts:%d(%d) Cache R/W: %d/%d LFS:%d RAW:%d HTP:%d DEC:%d CRE:%d ",
     text = llformat("Tex: %d Fetch: %d(%d) Pkts:%d(%d) CAC R/W: %d/%d LFS:%d RAW:%d HTP:%d DEC:%d CRE:%d FCA:%d ",
@@ -723,7 +726,24 @@ void LLGLTexMemBar::draw()
                     gTextureList.mCreateTextureList.size(),
                     gTextureList.mFastCacheList.size());
                     // </FS:Ansariel>
-
+#else
+    // <FS:Ansariel> Fast cache stats
+    //text = llformat("Textures: %d Fetch: %d(%d) Pkts:%d(%d) Cache R/W: %d/%d LFS:%d RAW:%d HTP:%d DEC:%d CRE:%d ",
+    text = llformat("Tex: %d Fetch: %d(%d) CAC R/W: %d/%d LFS:%d RAW:%d HTP:%d DEC:%d CRE:%d FCA:%d ",
+        // </FS:Ansariel>
+        gTextureList.getNumImages(),
+        LLAppViewer::getTextureFetch()->getNumRequests(), LLAppViewer::getTextureFetch()->getNumDeletes(),
+        LLAppViewer::getTextureCache()->getNumReads(), LLAppViewer::getTextureCache()->getNumWrites(),
+        LLLFSThread::sLocal->getPending(),
+        LLImageRaw::sRawImageCount,
+        LLAppViewer::getTextureFetch()->getNumHTTPRequests(),
+        LLAppViewer::getImageDecodeThread()->getPending(),
+        // <FS:Ansariel> Fast cache stats
+        //gTextureList.mCreateTextureList.size());
+        gTextureList.mCreateTextureList.size(),
+        gTextureList.mFastCacheList.size());
+    // </FS:Ansariel>
+#endif // OPENSIM
     x_right = 550.0f;
     LLFontGL::getFontMonospace()->renderUTF8(text, 0, 0.f, (F32)(v_offset + line_height*3),
                                              text_color, LLFontGL::LEFT, LLFontGL::TOP,
